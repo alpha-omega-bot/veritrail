@@ -1,0 +1,14 @@
+# Veritrail code ownership.
+# These owners are requested for review when someone opens a PR touching the path.
+
+# Default owners for everything.
+*                           @veritrail/maintainers
+
+# The trust core and ledger require core-team review.
+/packages/core/             @veritrail/core-team
+/packages/modules/audit/    @veritrail/core-team
+
+# Security-sensitive surfaces.
+/SECURITY.md                @veritrail/security
+/docs/THREAT-MODEL.md       @veritrail/security
+/.github/workflows/         @veritrail/platform

@@ -1,0 +1,39 @@
+{
+  "name": "@veritrail/cli",
+  "version": "0.1.0",
+  "description": "Veritrail operator CLI: verify, query, export, and append to a durable ledger.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "veritrail": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/main.ts",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/audit": "workspace:*",
+    "@veritrail/core": "workspace:*",
+    "@veritrail/forensics": "workspace:*",
+    "@veritrail/vendor-risk": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

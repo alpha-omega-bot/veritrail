@@ -1,0 +1,48 @@
+{
+  "name": "@veritrail/server",
+  "version": "0.1.0",
+  "description": "Veritrail HTTP server: a Fastify REST API mounting all eight governance engines over one ledger.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "veritrail-server": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@veritrail/audit": "workspace:*",
+    "@veritrail/core": "workspace:*",
+    "@veritrail/decision-memory": "workspace:*",
+    "@veritrail/evidence": "workspace:*",
+    "@veritrail/forensics": "workspace:*",
+    "@veritrail/permissions": "workspace:*",
+    "@veritrail/rollback": "workspace:*",
+    "@veritrail/spend-guard": "workspace:*",
+    "@veritrail/vendor-risk": "workspace:*",
+    "fastify": "^5.2.0",
+    "zod": "^3.24.1"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

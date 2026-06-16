@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a defect in Veritrail
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. If this is a **security vulnerability**, do not open a public
+        issue — follow the process in [SECURITY.md](../../SECURITY.md) instead.
+  - type: input
+    id: version
+    attributes:
+      label: Veritrail version
+      placeholder: '0.1.0'
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: Affected package
+      options:
+        - '@veritrail/core'
+        - '@veritrail/audit'
+        - '@veritrail/permissions'
+        - '@veritrail/spend-guard'
+        - '@veritrail/rollback'
+        - '@veritrail/forensics'
+        - '@veritrail/evidence'
+        - '@veritrail/decision-memory'
+        - '@veritrail/vendor-risk'
+        - '@veritrail/server'
+        - '@veritrail/cli'
+        - '@veritrail/sdk'
+        - 'console (web)'
+        - 'unsure'
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including expected vs actual behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimal steps or code to reproduce.
+      render: shell
+  - type: checkboxes
+    id: integrity
+    attributes:
+      label: Ledger integrity
+      options:
+        - label: This bug involves the ledger appearing tampered or `verify()` failing unexpectedly.

@@ -1,0 +1,266 @@
+import {
+  FixedClock,
+  SequentialIdGenerator,
+  createInMemoryLedger,
+  isErr,
+  isOk,
+  noopLogger,
+  sha256Hex,
+  unwrap,
+  type Ledger,
+  type ModuleContext,
+} from '@veritrail/core';
+import { describe, expect, it } from 'vitest';
+
+import { EvidenceModule, createEvidenceModule } from '../src/index.js';
+
+function makeCtx(): { ctx: ModuleContext; ledger: Ledger } {
+  const clock = new FixedClock(1_700_000_000_000);
+  const ids = new SequentialIdGenerator();
+  const ledger = createInMemoryLedger({ clock, ids });
+  const ctx: ModuleContext = { ledger, clock, ids, logger: noopLogger };
+  return { ctx, ledger };
+}
+
+describe('EvidenceModule.info', () => {
+  it('declares the evidence capability', () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    expect(mod).toBeInstanceOf(EvidenceModule);
+    expect(mod.info).toEqual({
+      name: '@veritrail/evidence',
+      version: '0.1.0',
+      capability: 'evidence',
+    });
+  });
+});
+
+describe('EvidenceModule.attach', () => {
+  it('attaches evidence without a contentHash, assigning an id', async () => {
+    const { ctx, ledger } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+
+    const res = await mod.attach({
+      actorId: 'agent-1',
+      kind: 'observation',
+      source: 'sensor://a',
+      summary: 'no hash here',
+    });
+    expect(isOk(res)).toBe(true);
+    const record = unwrap(res);
+    expect(record.event.type).toBe('evidence.attached');
+
+    const stored = await mod.list();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.id).toMatch(/^evd/);
+    expect(stored[0]?.contentHash).toBeUndefined();
+
+    // The fact is on the shared ledger, not a side store.
+    const all = await ledger.readAll();
+    expect(all).toHaveLength(1);
+  });
+
+  it('attaches evidence with a contentHash and a supplied id', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const hash = sha256Hex('hello world');
+
+    const res = await mod.attach({
+      actorId: 'agent-1',
+      id: 'evd-custom',
+      kind: 'document',
+      source: 'file://doc.txt',
+      summary: 'a doc',
+      contentHash: hash,
+    });
+    expect(isOk(res)).toBe(true);
+
+    const got = await mod.get('evd-custom');
+    expect(got?.contentHash).toBe(hash);
+  });
+
+  it('rejects a non-object input', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const res = await mod.attach('nope');
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('VALIDATION');
+  });
+
+  it('rejects input without an actorId', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const res = await mod.attach({ kind: 'document', summary: 'x' });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('VALIDATION');
+  });
+
+  it('rejects an invalid kind', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const res = await mod.attach({ actorId: 'a', kind: 'not-a-kind', summary: 'x' });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('VALIDATION');
+  });
+
+  it('rejects a malformed contentHash', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const res = await mod.attach({
+      actorId: 'a',
+      kind: 'document',
+      summary: 'x',
+      contentHash: 'too-short',
+    });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('VALIDATION');
+  });
+});
+
+describe('EvidenceModule.get', () => {
+  it('returns null for a missing id', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    expect(await mod.get('evd-nope')).toBeNull();
+  });
+});
+
+describe('EvidenceModule.trace', () => {
+  it('walks a 3-node derived_from chain', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+
+    // c <- b <- a (root is a; a derived_from b, b derived_from c).
+    await mod.attach({ actorId: 'a', id: 'evd-c', kind: 'dataset', summary: 'root data' });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-b',
+      kind: 'tool_output',
+      summary: 'mid',
+      links: { evidenceIds: ['evd-c'] },
+    });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-a',
+      kind: 'citation',
+      summary: 'top',
+      links: { evidenceIds: ['evd-b'] },
+    });
+
+    const res = await mod.trace('evd-a');
+    expect(isOk(res)).toBe(true);
+    const graph = unwrap(res);
+    expect(graph.rootId).toBe('evd-a');
+
+    const ids = graph.nodes.map((n) => n.id).sort();
+    expect(ids).toEqual(['evd-a', 'evd-b', 'evd-c']);
+
+    const edgePairs = graph.edges.map((e) => `${e.from}->${e.to}`).sort();
+    expect(edgePairs).toEqual(['evd-a->evd-b', 'evd-b->evd-c']);
+    expect(graph.edges.every((e) => e.relation === 'derived_from')).toBe(true);
+  });
+
+  it('does not loop forever on a cycle', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+
+    // a <-> b cycle.
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-a',
+      kind: 'artifact',
+      summary: 'a',
+      links: { evidenceIds: ['evd-b'] },
+    });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-b',
+      kind: 'artifact',
+      summary: 'b',
+      links: { evidenceIds: ['evd-a'] },
+    });
+
+    const res = await mod.trace('evd-a');
+    expect(isOk(res)).toBe(true);
+    const graph = unwrap(res);
+    expect(graph.nodes.map((n) => n.id).sort()).toEqual(['evd-a', 'evd-b']);
+    // Each node visited once; both edges recorded.
+    expect(graph.edges).toHaveLength(2);
+  });
+
+  it('records edges to dangling upstream ids but does not create nodes for them', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-a',
+      kind: 'document',
+      summary: 'a',
+      links: { evidenceIds: ['evd-missing'] },
+    });
+
+    const graph = unwrap(await mod.trace('evd-a'));
+    expect(graph.nodes.map((n) => n.id)).toEqual(['evd-a']);
+    expect(graph.edges).toEqual([{ from: 'evd-a', to: 'evd-missing', relation: 'derived_from' }]);
+  });
+
+  it('returns NOT_FOUND when the root is missing', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const res = await mod.trace('evd-nope');
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('EvidenceModule.verifyContent', () => {
+  it('returns true when content matches the stored hash', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const content = 'the quick brown fox';
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-1',
+      kind: 'document',
+      summary: 'doc',
+      contentHash: sha256Hex(content),
+    });
+
+    const res = await mod.verifyContent('evd-1', content);
+    expect(isOk(res)).toBe(true);
+    expect(unwrap(res)).toBe(true);
+  });
+
+  it('returns false when content does not match', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-1',
+      kind: 'document',
+      summary: 'doc',
+      contentHash: sha256Hex('original'),
+    });
+
+    const res = await mod.verifyContent('evd-1', 'tampered');
+    expect(isOk(res)).toBe(true);
+    expect(unwrap(res)).toBe(false);
+  });
+
+  it('returns NOT_FOUND when the evidence is missing', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const res = await mod.verifyContent('evd-nope', 'x');
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('NOT_FOUND');
+  });
+
+  it('returns NOT_FOUND when the evidence has no contentHash', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach({ actorId: 'a', id: 'evd-1', kind: 'observation', summary: 'no hash' });
+    const res = await mod.verifyContent('evd-1', 'x');
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('NOT_FOUND');
+  });
+});

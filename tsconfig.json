@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Veritrail root typecheck (source-resolved)",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": ".",
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "@veritrail/core": ["packages/core/src/index.ts"],
+      "@veritrail/sdk": ["packages/sdk/src/index.ts"],
+      "@veritrail/server": ["packages/server/src/index.ts"],
+      "@veritrail/cli": ["packages/cli/src/index.ts"],
+      "@veritrail/audit": ["packages/modules/audit/src/index.ts"],
+      "@veritrail/permissions": ["packages/modules/permissions/src/index.ts"],
+      "@veritrail/spend-guard": ["packages/modules/spend-guard/src/index.ts"],
+      "@veritrail/rollback": ["packages/modules/rollback/src/index.ts"],
+      "@veritrail/forensics": ["packages/modules/forensics/src/index.ts"],
+      "@veritrail/evidence": ["packages/modules/evidence/src/index.ts"],
+      "@veritrail/decision-memory": ["packages/modules/decision-memory/src/index.ts"],
+      "@veritrail/vendor-risk": ["packages/modules/vendor-risk/src/index.ts"]
+    }
+  },
+  "include": ["packages/**/src/**/*.ts", "packages/**/test/**/*.ts", "vitest.config.ts"],
+  "exclude": ["**/dist/**", "**/node_modules/**", "apps/**"]
+}

@@ -1,0 +1,96 @@
+# @veritrail/decision-memory
+
+The **Decision Memory** engine for Veritrail — record _why_ an agent did what
+it did, and recall it later.
+
+Like every Veritrail capability, this module is a projection over the single
+tamper-evident, hash-chained ledger in `@veritrail/core`. Recording a decision
+appends a `decision.recorded` event; reads (`list`, `get`, `recall`) replay
+those events. There is **no separate store**.
+
+> Status: **scaffold baseline.** Recall is a simple lexical (token-overlap)
+> ranker. See the Phase 1 TODO below.
+
+## What it does
+
+- **`record`** — validate a `Decision` (via `DecisionSchema`) and append a
+  `decision.recorded` fact. An `id` is minted with `ids.next('dec')` when
+  absent. The decision's `actorId` becomes the ledger envelope actor, so
+  decisions stay queryable by actor.
+- **`list` / `get`** — project recorded decisions from the ledger
+  (most-recent-first; `get` returns the latest recording for an id).
+- **`recall`** — rank decisions by lexical overlap with a free-text query.
+
+## Public API
+
+```ts
+interface DecisionMatch {
+  decision: Decision;
+  score: number; // shared / max(1, queryTokens); 1 for empty-text recall
+}
+
+interface RecallQuery {
+  text?: string;
+  actorId?: string;
+  limit?: number; // default 10
+}
+
+class DecisionMemoryModule implements VeritrailModule {
+  readonly info: {
+    name: '@veritrail/decision-memory';
+    version: '0.1.0';
+    capability: 'decision-memory';
+  };
+  constructor(ctx: ModuleContext);
+  record(input: unknown): Promise<Result<LedgerRecord, VeritrailError>>;
+  list(opts?: { actorId?: string; limit?: number }): Promise<Decision[]>;
+  get(decisionId: string): Promise<Decision | null>;
+  recall(query: RecallQuery): Promise<DecisionMatch[]>;
+}
+
+function createDecisionMemoryModule(ctx: ModuleContext): DecisionMemoryModule;
+```
+
+### Scoring
+
+`recall` tokenizes `query.text` (lowercase, split on non-alphanumerics, drop
+empties) and scores each decision against the tokens of
+`summary + ' ' + rationale + ' ' + chosen`:
+
+```
+score = sharedTokenCount / max(1, queryTokenCount)
+```
+
+Results are filtered by `actorId` (when set), sorted by score descending then
+most-recent, and truncated to `limit` (default `10`). Decisions sharing no query
+tokens are dropped. When `query.text` is absent or has no tokens, recall returns
+the most-recent decisions, each with `score: 1`.
+
+## Example
+
+```ts
+import { createInMemoryLedger } from '@veritrail/core';
+import { createDecisionMemoryModule } from '@veritrail/decision-memory';
+
+const ledger = createInMemoryLedger();
+const memory = createDecisionMemoryModule({ ledger, clock, ids, logger });
+
+await memory.record({
+  actorId: 'agent-1',
+  summary: 'Choose a primary database',
+  rationale: 'Need strong consistency and mature tooling',
+  chosen: 'postgres',
+});
+
+const hits = await memory.recall({ text: 'database consistency' });
+// hits[0].decision.summary === 'Choose a primary database'
+```
+
+## Phase 1 TODO
+
+- **Vector / semantic recall via embeddings** — replace token overlap with
+  embedding similarity so paraphrases and synonyms match.
+- **Outcome linkage** — join decisions to the `action.*` events they caused
+  (via `relatedActionIds`) to surface which decisions led to good/bad outcomes.
+- **Recency / decay weighting** — blend a time-decay factor into the relevance
+  score so recent decisions are preferred without dominating strong matches.

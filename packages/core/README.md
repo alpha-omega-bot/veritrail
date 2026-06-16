@@ -1,0 +1,52 @@
+# @veritrail/core
+
+The trust core of [Veritrail](../../README.md): a tamper-evident, hash-chained
+event ledger plus the domain model the platform's eight governance engines
+project over.
+
+## What's here
+
+| Area        | Exports                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------- |
+| **Ledger**  | `Ledger`, `verifyChain`, `IntegrityReport`, `LedgerRecord`, hashing                                  |
+| **Domain**  | Zod schemas + types: `Action`, `Decision`, `Evidence`, `Policy`, `Budget`, `Vendor`, `EventInput`, … |
+| **Storage** | `EventStore` port, `InMemoryEventStore`, `FileEventStore`                                            |
+| **Ports**   | `Clock`, `IdGenerator`, `Logger`, `Signer` (+ default/test impls)                                    |
+| **Utils**   | `Result`, `VeritrailError`, `canonicalize`, `sha256Hex`                                              |
+
+## The one idea
+
+Everything that happens — an action proposed, a decision recorded, a budget
+charged, a vendor signal observed — is a **validated event appended to a single
+append-only ledger**. Each record is hash-chained to its predecessor, so any
+mutation, insertion, or deletion is detectable. The eight capabilities (audit,
+permissions, spend guard, rollback, forensics, evidence, decision memory, vendor
+risk) are _projections and engines over that one stream_, not separate stores.
+
+```ts
+import { createInMemoryLedger } from '@veritrail/core';
+
+const ledger = createInMemoryLedger();
+
+await ledger.append({
+  type: 'action.executed',
+  actorId: 'agent-7',
+  correlationId: 'run-42',
+  payload: { actionId: 'act-1', outcome: 'success', cost: { currency: 'USD', amountMinor: 120 } },
+});
+
+const report = await ledger.verify();
+console.log(report.ok, report.head); // true, <chain head hash>
+```
+
+## Guarantees & limits
+
+- **Tamper-evident**: `verify()` recomputes every hash and checks every link.
+  A single altered record surfaces as one `hash_mismatch`; re-hashing it surfaces
+  as a downstream `chain_break`.
+- **Forgery-resistant (optional)**: provide a `Signer` to sign every record.
+- **Anchoring (roadmap)**: a fully-rewritten _unsigned_ chain is internally
+  consistent; compare `report.head` against an externally anchored value to
+  detect wholesale rewrites. External anchoring is on the roadmap.
+
+See [`docs/concepts/ledger.md`](../../docs/concepts/ledger.md) for the full model.

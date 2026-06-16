@@ -1,0 +1,36 @@
+{
+  "name": "@veritrail/sdk",
+  "version": "0.1.0",
+  "description": "Veritrail SDK: typed in-process instrumentation for agent actions and a thin HTTP client for the Veritrail server.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/core": "workspace:*",
+    "@veritrail/permissions": "workspace:*",
+    "@veritrail/spend-guard": "workspace:*",
+    "zod": "^3.24.1"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
