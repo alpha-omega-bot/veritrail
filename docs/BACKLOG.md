@@ -13,12 +13,12 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
 
 ## P0 — Repository safety (do first)
 
-- [ ] **Enable server-side branch protection on `main`.** The current PAT lacks
-      "Administration: write", so it must be done in the GitHub UI OR by granting
-      the scope and running `scripts/protect-branch.sh alpha-omega-bot/veritrail main`.
-      Required checks: `verify (node 20)`, `verify (node 22)`, `ledger integrity gate`;
-      linear history; block force-push & deletion; required conversation resolution.
-      (Local pre-push hook is already active but bypassable.)
+- [x] **Enable server-side branch protection on `main`.** Applied via
+      `scripts/protect-branch.sh alpha-omega-bot/veritrail main` after the PAT
+      gained the required administration scope. Required checks:
+      `verify (node 20)`, `verify (node 22)`, `ledger integrity gate`; strict
+      up-to-date checks; linear history; block force-push & deletion; required
+      conversation resolution. (Local pre-push hook is active but bypassable.)
 - [x] Local pre-push hook blocking broken pushes (`.githooks/pre-push`).
 - [x] CI green on `main` (verify on Node 20/22 + ledger-integrity gate + CodeQL).
 
@@ -147,6 +147,15 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Enabled server-side branch protection on `main` after the PAT
+  gained administration scope. Verified strict required checks
+  (`verify (node 20)`, `verify (node 22)`, `ledger integrity gate`), admin
+  enforcement, linear history, blocked force-push/deletion, and required
+  conversation resolution. Merge settings are squash/rebase only with branch
+  auto-delete. CodeQL could not upload to GitHub code scanning because private-repo
+  Advanced Security is not purchased; upgraded CodeQL to v4 and configured it to
+  publish SARIF as a CI artifact instead. **Next:** start Milestone 1 with
+  durable `FileEventStore.append` fsync/atomicity.
 - **2026-06-17** — Bootstrap by Claude: built v0.1 (core + 8 modules + sdk +
   server + cli + console + docs + CI), ran adversarial review, fixed 6
   high/critical + several lower findings (199 tests green). Created private repo
