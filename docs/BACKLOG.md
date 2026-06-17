@@ -26,9 +26,10 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
 
 ## P1 — Milestone 1: productionize the core
 
-- [ ] **Durable file append.** `FileEventStore.append` does not fsync and is not
-      atomic; an acknowledged write can be lost/torn on crash. Use atomic
-      append + fsync (or temp-write+rename for snapshots). (review: core/medium)
+- [x] **Durable file append.** `FileEventStore.append` now uses explicit
+      append-mode file handles, file `fsync` before acknowledgement,
+      rollback/truncation on failed durable append, and torn-tail truncation
+      during open before future appends. (review: core/medium)
 - [ ] **Relational `EventStore`.** Implement SQLite (single-node) and Postgres
       (HA) adapters behind the existing `EventStore` port; migrations;
       concurrent-writer safety. Nothing above the port should change.
@@ -147,6 +148,12 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Started Milestone 1 durable file append hardening. Replaced
+  `FileEventStore.append`'s plain `appendFile` path with explicit append-mode
+  file handles, file `fsync` before acknowledgement, rollback/truncation on
+  failed durable append, and torn-tail truncation during open before future
+  appends. Added adversarial fsync-failure and torn-tail recovery tests.
+  **Next:** continue Milestone 1 with the relational `EventStore` adapter.
 - **2026-06-17** — Enabled server-side branch protection on `main` after the PAT
   gained administration scope. Verified strict required checks
   (`verify (node 20)`, `verify (node 22)`, `ledger integrity gate`), admin
