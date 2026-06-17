@@ -35,20 +35,19 @@ Endpoints consumed (all `GET`):
 | `/api/vendor-risk/assess`                | Vendor Risk |
 | `/api/forensics/incident?correlationId=` | Forensics   |
 
-## Mock fallback
+## Offline Data
 
-This is a **Phase-1 scaffold**. Every API call is wrapped in a try/catch and
-falls back to realistic mock data in `src/mocks.ts`, so the SPA renders fully
-standalone with **no server running**. When mock data is shown, a small notice
-appears at the top of the affected view.
+Every API call is wrapped in a try/catch and falls back to local sample data in
+`src/mocks.ts`, so the SPA renders fully standalone with no server running. When
+sample data is shown, a small notice appears at the top of the affected view.
 
 ## Structure
 
 ```
 src/
-  api.ts          typed REST client + useAsync hook (with mock fallback)
+  api.ts          typed REST client + useAsync hook (with offline fallback)
   types.ts        API payload interfaces
-  mocks.ts        local fallback data
+  mocks.ts        local sample data
   format.ts       presentation helpers (currency, dates, hashes)
   App.tsx         hash-based navigation (no router dependency)
   main.tsx        React root

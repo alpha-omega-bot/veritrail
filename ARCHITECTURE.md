@@ -128,10 +128,8 @@ The `EventStore` port has three reference adapters, all dependency-light:
   The on-disk form mirrors the ledger's semantics and is trivially auditable.
 - `RelationalEventStore` (`@veritrail/relational-store`) — SQL table storage
   behind a small transaction-capable SQL executor port. It ships SQLite/Postgres
-  dialect builders and keeps concrete database drivers out of the trust core.
-
-Concrete SQLite/Postgres driver wrappers and operational migrations remain on
-the roadmap; nothing above the port changes when they land.
+  dialect builders, concrete SQLite/Postgres driver wrappers, and keeps concrete
+  database drivers out of the trust core.
 
 ## 4. The module pattern
 

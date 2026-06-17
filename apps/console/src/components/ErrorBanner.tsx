@@ -10,11 +10,11 @@ export function ErrorBanner({ message }: ErrorBannerProps) {
   );
 }
 
-/** Subtle notice that the displayed data is local mock fallback, not live. */
+/** Subtle notice that the displayed data is local sample data, not live. */
 export function MockNotice() {
   return (
     <div className="mock-notice" role="note">
-      Showing mock data — the Veritrail API is unreachable.
+      Showing sample data. Connect the Veritrail API for live records.
     </div>
   );
 }

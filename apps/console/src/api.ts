@@ -1,6 +1,6 @@
 // Typed REST client over the Veritrail server API (mounted at `/api`, proxied
-// to :8787 in dev). Every call try/catches and falls back to local mock data
-// so the console renders standalone with no server running.
+// to :8787 in dev). Calls fall back to local sample data when the API is
+// unavailable so the console can render standalone.
 
 import {
   mockAuditSummary,
@@ -27,7 +27,7 @@ export interface AsyncState<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
-  /** True when the value came from the local mock fallback. */
+  /** True when the value came from local sample data. */
   fromMock: boolean;
 }
 
@@ -47,7 +47,7 @@ async function getJson<T>(path: string, fallback: T): Promise<FetchOutcome<T>> {
     const data = (await res.json()) as T;
     return { data, fromMock: false };
   } catch {
-    // Standalone / offline mode: serve realistic mock data instead of failing.
+    // Standalone / offline mode: serve local sample data instead of failing.
     return { data: fallback, fromMock: true };
   }
 }

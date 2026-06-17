@@ -1,4 +1,4 @@
-// Realistic mock data shaped to match the API responses in types.ts.
+// Local sample data shaped to match the API responses in types.ts.
 // The API client falls back to these so the SPA renders standalone with no server.
 
 import type {
@@ -13,7 +13,7 @@ import type {
 
 export const mockHealth: HealthStatus = {
   ok: true,
-  version: '0.1.0-mock',
+  version: '0.1.0-sample',
   uptimeSeconds: 48213,
 };
 

@@ -33,7 +33,7 @@ export function OverviewView() {
         <h1 id="overview-heading">Overview</h1>
         <p className="view__lede">
           Ledger integrity, spend, and vendor risk at a glance
-          {health.data ? ` · API ${health.data.version}` : ''}.
+          {health.data && !health.fromMock ? ` · API ${health.data.version}` : ''}.
         </p>
       </header>
 

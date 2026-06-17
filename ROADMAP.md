@@ -29,9 +29,9 @@ The trust core and a coherent, tested platform skeleton.
 
 Make the system durable, secure, and operable for a first real deployment.
 
-- 🚧 **Relational `EventStore`** behind the existing port: dependency-light SQL
-  adapter and SQLite/Postgres dialect builders are in place; concrete SQLite
-  single-node and Postgres HA driver wrappers remain.
+- ✅ **Relational `EventStore`** behind the existing port: dependency-light SQL
+  adapter, migrations, SQLite/Postgres dialect builders, and concrete
+  SQLite/Postgres driver wrappers with documented writer-safety guarantees.
 - ⬜ **Asymmetric signing** (Ed25519) via a `Signer` adapter backed by KMS/HSM;
   key rotation and `signerKeyId` chains.
 - ⬜ **External anchoring**: periodically publish the chain head (e.g. to a

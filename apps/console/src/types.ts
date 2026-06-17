@@ -1,6 +1,6 @@
 // Shared TypeScript interfaces mirroring the Veritrail server/module payloads.
 // These are intentionally narrow and explicit so the read-only console can
-// render predictably with either live API data or local mocks.
+// render predictably with either live API data or local sample data.
 
 /** Result of verifying the append-only audit ledger. */
 export interface AuditSummary {
