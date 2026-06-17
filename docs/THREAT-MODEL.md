@@ -40,8 +40,10 @@ We use STRIDE as a checklist.
 - **T2 — Insert/delete records.** _Mitigation:_ contiguous `seq` + prevHash
   linkage; `verify()` reports `seq_gap`/`chain_break`. ✔ tested.
 - **T3 — Rewrite the entire unsigned chain.** _Mitigation:_ enable signing; and/or
-  external anchoring of the head. ⚠ anchoring is Milestone 1 — until then, monitor
-  the head out-of-band. **Residual risk acknowledged.**
+  publish external anchors of the head through an independent `AnchorStore`.
+  ✔ core port/helper implemented; concrete anchor stores must live outside the
+  ledger's own storage/admin boundary. **Residual risk:** unanchored intervals
+  remain rewriteable until the next checkpoint is published.
 - **T4 — Forge records when signing is on.** _Mitigation:_ signature verification;
   Ed25519 asymmetric signing removes shared-secret verifier exposure.
   `RemoteEd25519Signer` supports KMS/HSM custody while keeping verification local.

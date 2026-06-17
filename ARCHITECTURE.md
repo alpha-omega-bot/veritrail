@@ -116,7 +116,7 @@ interface LedgerRecord {
 insertion/deletion, and (when signing is on) forgery — and **localizes** a single
 tampered record rather than cascading the error. The one honest limitation: a
 fully-rewritten _unsigned_ chain is internally consistent; detecting that requires
-either signing or comparing the head against an external anchor (on the roadmap).
+either signing or comparing the head against an external anchor.
 Full detail in [`docs/concepts/ledger.md`](./docs/concepts/ledger.md).
 
 ### 3.3 Storage
@@ -130,6 +130,23 @@ The `EventStore` port has three reference adapters, all dependency-light:
   behind a small transaction-capable SQL executor port. It ships SQLite/Postgres
   dialect builders, concrete SQLite/Postgres driver wrappers, and keeps concrete
   database drivers out of the trust core.
+
+### 3.4 External anchoring
+
+An unsigned chain can be rewritten from genesis and still verify internally. The
+anchoring helpers in `@veritrail/core` close that deployment gap by publishing
+periodic checkpoints of the ledger head to an `AnchorStore`:
+
+- `publishLedgerHeadAnchor()` reads the current `LedgerReader.head()` and stores
+  `{ anchorId, anchoredAt, seq, recordId, headHash, headTimestamp }`, plus
+  signature metadata when the anchored record is signed.
+- `verifyLedgerAgainstLatestAnchor()` verifies the current chain and compares the
+  latest anchor to the record at that anchored `seq`. Later appends are allowed;
+  rewriting or removing the anchored prefix is reported as an anchor failure.
+- `InMemoryAnchorStore` is a dependency-free adapter for tests and local
+  development. Production deployments should implement `AnchorStore` over an
+  independent external system such as immutable object storage, a notary, or a
+  transparency log.
 
 ## 4. The module pattern
 

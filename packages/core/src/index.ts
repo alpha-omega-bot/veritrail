@@ -13,6 +13,9 @@ export * from './domain/index.js';
 // The ledger: records, integrity verification, and the Ledger service.
 export * from './ledger/index.js';
 
+// External checkpoints for detecting wholesale ledger rewrites.
+export * from './anchoring/index.js';
+
 // Storage ports and adapters.
 export * from './storage/index.js';
 
