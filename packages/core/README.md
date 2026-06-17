@@ -14,6 +14,11 @@ project over.
 | **Ports**   | `Clock`, `IdGenerator`, `Logger`, `Signer` (+ default/test impls)                                    |
 | **Utils**   | `Result`, `VeritrailError`, `canonicalize`, `sha256Hex`                                              |
 
+`FileEventStore` persists ledger records as append-only JSON Lines. Each append
+is flushed with file `fsync` before it is acknowledged, and reopening a file with
+a torn trailing line recovers and truncates to the last complete committed
+record.
+
 ## The one idea
 
 Everything that happens — an action proposed, a decision recorded, a budget

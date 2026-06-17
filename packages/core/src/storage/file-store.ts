@@ -1,4 +1,5 @@
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { mkdir, open as openFile, readFile, stat, truncate } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { LedgerRecord } from '../ledger/record.js';
@@ -10,11 +11,144 @@ interface ErrnoLike {
   code?: string;
 }
 
+async function withHandle<T>(
+  path: string,
+  flags: string,
+  fn: (handle: FileHandle) => Promise<T>,
+): Promise<T> {
+  let handle: FileHandle | undefined;
+  let thrown: unknown;
+  let value: T | undefined;
+
+  try {
+    handle = await openFile(path, flags);
+    value = await fn(handle);
+  } catch (cause) {
+    thrown = cause;
+  } finally {
+    if (handle !== undefined) {
+      try {
+        await handle.close();
+      } catch (cause) {
+        thrown ??= cause;
+      }
+    }
+  }
+
+  if (thrown !== undefined) throw thrown;
+  return value as T;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (cause) {
+    if ((cause as ErrnoLike).code === 'ENOENT') return false;
+    throw cause;
+  }
+}
+
+function isUnsupportedDirectorySync(cause: unknown): boolean {
+  const code = (cause as ErrnoLike).code;
+  return code === 'EINVAL' || code === 'ENOTSUP' || code === 'EPERM' || code === 'EISDIR';
+}
+
+async function syncParentDirectory(path: string): Promise<void> {
+  try {
+    await withHandle(dirname(path), 'r', async (handle) => {
+      await handle.sync();
+    });
+  } catch (cause) {
+    // Some platforms/filesystems do not expose directory fsync. File fsync below
+    // remains mandatory; directory fsync is best-effort for cross-platform use.
+    if (!isUnsupportedDirectorySync(cause)) throw cause;
+  }
+}
+
+async function createFileDurably(path: string): Promise<void> {
+  if (await exists(path)) return;
+  await withHandle(path, 'a', async (handle) => {
+    await handle.sync();
+  });
+  await syncParentDirectory(path);
+}
+
+async function appendLineDurably(path: string, line: string): Promise<void> {
+  const previousLength = (await stat(path)).size;
+  try {
+    await withHandle(path, 'a', async (handle) => {
+      await handle.writeFile(line, 'utf8');
+      await handle.sync();
+    });
+  } catch (cause) {
+    try {
+      await truncateDurably(path, previousLength);
+    } catch {
+      // Preserve the original write/fsync failure for callers. The store does
+      // not advance its in-memory head unless the durable append succeeds.
+    }
+    throw cause;
+  }
+}
+
+async function truncateDurably(path: string, length: number): Promise<void> {
+  await truncate(path, length);
+  await withHandle(path, 'r+', async (handle) => {
+    await handle.sync();
+  });
+}
+
+function parseRecords(
+  content: string,
+  path: string,
+): { records: LedgerRecord[]; truncateAt: number | undefined } {
+  const records: LedgerRecord[] = [];
+  const lines = content.split('\n');
+  let lastNonEmptyLine = -1;
+  let offset = 0;
+
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if ((lines[i] as string).trim().length > 0) {
+      lastNonEmptyLine = i;
+      break;
+    }
+  }
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] as string;
+    const hasTerminator = i < lines.length - 1;
+    const lineBytes = Buffer.byteLength(line, 'utf8') + (hasTerminator ? 1 : 0);
+
+    if (line.trim().length === 0) {
+      offset += lineBytes;
+      continue;
+    }
+
+    try {
+      records.push(JSON.parse(line) as LedgerRecord);
+    } catch (cause) {
+      // A torn final line is the normal crash-during-append failure mode:
+      // recover the committed prefix by dropping it. Interior corruption is
+      // unrecoverable and is surfaced as an error.
+      if (i === lastNonEmptyLine) {
+        return { records, truncateAt: offset };
+      }
+      throw storageError(`corrupt ledger line ${i + 1} in ${path}`, cause);
+    }
+
+    offset += lineBytes;
+  }
+
+  return { records, truncateAt: undefined };
+}
+
 /**
  * Durable, append-only ledger backed by a JSON Lines file. One record per line;
  * the file is only ever appended to, which mirrors the ledger's own semantics
- * and makes the on-disk form trivially auditable (and `tail -f`-able). Pure JS,
- * no native dependencies — the safe default for self-hosting.
+ * and makes the on-disk form trivially auditable (and `tail -f`-able). Appends
+ * are flushed with fsync before they are acknowledged. Pure JS, no native
+ * dependencies — the safe default for self-hosting.
  *
  * For high-throughput or relational querying, a SQLite/Postgres adapter
  * implementing the same `EventStore` port is on the roadmap.
@@ -28,25 +162,17 @@ export class FileEventStore extends ArrayBackedEventStore {
     this.records.push(...records);
   }
 
-  /** Open (and create the parent directory of) a ledger file, loading any existing records. */
+  /** Open (and create) a ledger file, loading any existing records. */
   static async open(path: string): Promise<FileEventStore> {
     await mkdir(dirname(path), { recursive: true });
     let records: LedgerRecord[] = [];
     try {
+      await createFileDurably(path);
       const content = await readFile(path, 'utf8');
-      const lines = content.split('\n').filter((line) => line.trim().length > 0);
-      records = [];
-      for (let i = 0; i < lines.length; i += 1) {
-        const line = lines[i] as string;
-        try {
-          records.push(JSON.parse(line) as LedgerRecord);
-        } catch (cause) {
-          // A torn final line is the normal crash-during-append failure mode:
-          // recover the committed prefix by dropping it. Interior corruption is
-          // unrecoverable and is surfaced as an error.
-          if (i === lines.length - 1) break;
-          throw storageError(`corrupt ledger line ${i + 1} in ${path}`, cause);
-        }
+      const parsed = parseRecords(content, path);
+      records = parsed.records;
+      if (parsed.truncateAt !== undefined) {
+        await truncateDurably(path, parsed.truncateAt);
       }
     } catch (error) {
       if ((error as ErrnoLike).code !== 'ENOENT') {
@@ -61,7 +187,7 @@ export class FileEventStore extends ArrayBackedEventStore {
     const check = this.checkAppend(record);
     if (!check.ok) return check;
     try {
-      await appendFile(this.#path, `${JSON.stringify(record)}\n`, 'utf8');
+      await appendLineDurably(this.#path, `${JSON.stringify(record)}\n`);
     } catch (cause) {
       return { ok: false, error: storageError(`failed to append to ${this.#path}`, cause) };
     }

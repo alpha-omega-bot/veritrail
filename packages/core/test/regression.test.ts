@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, rm } from 'node:fs/promises';
+import { appendFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -57,6 +57,34 @@ describe('FileEventStore torn-trailing-line recovery', () => {
     expect(await store.count()).toBe(2);
     const report = verifyChain(await store.readAll());
     expect(report.ok).toBe(true);
+  });
+
+  it('truncates a torn trailing line before the next append', async () => {
+    const path = tempPath();
+    const ledger = await createFileLedger(path, {
+      clock: new FixedClock(1000),
+      ids: new SequentialIdGenerator(),
+    });
+    await ledger.append({ type: 'note', actorId: 'a', payload: { text: 'one' } });
+
+    await appendFile(path, '{"seq":2,"id":"evt_torn"', 'utf8');
+
+    const reopened = await createFileLedger(path, {
+      clock: new FixedClock(1001),
+      ids: new SequentialIdGenerator(),
+    });
+    const appended = await reopened.append({
+      type: 'note',
+      actorId: 'a',
+      payload: { text: 'after recovery' },
+    });
+    expect(appended.ok).toBe(true);
+
+    const afterSecondReopen = await FileEventStore.open(path);
+    expect(await afterSecondReopen.count()).toBe(2);
+    const content = await readFile(path, 'utf8');
+    expect(content).not.toContain('evt_torn');
+    expect(verifyChain(await afterSecondReopen.readAll()).ok).toBe(true);
   });
 });
 
