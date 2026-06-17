@@ -50,8 +50,10 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       runbook are in place. Production deployments still need concrete provider
       adapters to publish checkpoints to an independent object store, notary, or
       transparency log.
-- [ ] **Server authN/authZ.** API keys/OIDC, per-actor scoping, operator RBAC;
-      record administrative actions on the ledger. (threat: S1)
+- [ ] **Server authN/authZ.** API-key auth, route roles, and ledger-recorded
+      administrative policy/budget changes are implemented. Remaining work:
+      OIDC, tenant/project scoping, broader operator RBAC policy, and signed
+      administrative action verification. (threat: S1)
 - [ ] **PII handling.** Field-level redaction/encryption hooks at the append
       boundary; configurable retention with cryptographic erasure. (threat: I1)
 - [ ] **Backpressure & limits.** Request rate limiting, payload caps, and append
@@ -165,6 +167,12 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Started server authN/authZ. Added API-key authentication with
+  `ingest`/`operator`/`admin` route roles, optional `buildServer({ auth })`
+  configuration, `VERITRAIL_API_KEYS` parsing for the server binary, and
+  ledger-recorded `admin.action` facts for policy/budget configuration changes.
+  **Next:** finish remaining server auth depth with OIDC, tenant/project scoping,
+  and richer operator RBAC.
 - **2026-06-17** — Added `@veritrail/provider-signers`, a dependency-light package
   with AWS KMS, GCP Cloud KMS, Azure Key Vault, and generic HSM/PKCS#11-shaped
   `RemoteSignerClient` adapters for `RemoteEd25519Signer`. Provider SDKs stay out

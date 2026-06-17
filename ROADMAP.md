@@ -42,8 +42,9 @@ Make the system durable, secure, and operable for a first real deployment.
 - ✅ **External anchoring**: core `AnchorStore` port, in-memory adapter, helpers
   to publish and verify ledger-head checkpoints, and operator runbook for
   transparency-log/object-store/notary deployments.
-- ⬜ **AuthN/AuthZ** on the server: API keys/OIDC, per-actor scoping, and RBAC for
-  operators; signed audit of administrative actions.
+- 🚧 **AuthN/AuthZ** on the server: API-key auth, route roles, and ledger-recorded
+  administrative policy/budget actions are implemented; OIDC and tenant/project
+  scoping remain.
 - ⬜ **PII handling**: field-level redaction/encryption hooks at the append
   boundary; configurable retention with cryptographic erasure.
 - ⬜ **Backpressure & batching** for high-throughput append paths.

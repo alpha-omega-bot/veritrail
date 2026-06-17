@@ -2,9 +2,11 @@ import cors from '@fastify/cors';
 import {
   ActionSchema,
   ActorSchema,
+  BudgetSchema,
   CAPABILITIES,
   HmacSigner,
   MoneySchema,
+  PolicySchema,
   createFileLedger,
   createInMemoryLedger,
   isEventType,
@@ -14,9 +16,16 @@ import {
   type Ledger,
 } from '@veritrail/core';
 import type { PermissionsConfig } from '@veritrail/permissions';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
+import {
+  ApiKeyAuthenticator,
+  parseAuthHeader,
+  type ApiKeyPrincipal,
+  type AuthConfig,
+  type ServerRole,
+} from './auth.js';
 import { asNumber, asString, replyError, replyResult } from './http.js';
 import { createPlatform, type Platform } from './platform.js';
 
@@ -32,6 +41,11 @@ export interface BuildServerOptions {
   /** Enable permissive CORS (default true; restrict in production). */
   cors?: boolean;
   permissions?: PermissionsConfig;
+  /**
+   * API-key authentication. When omitted, the server preserves the v0.1
+   * unauthenticated behavior for local development and tests.
+   */
+  auth?: AuthConfig;
 }
 
 const startedAt = Date.now();
@@ -82,13 +96,19 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   if (options.cors !== false) {
     await app.register(cors, { origin: true });
   }
-  registerRoutes(app, platform);
+  const authenticator = options.auth ? new ApiKeyAuthenticator(options.auth) : undefined;
+  registerRoutes(app, platform, authenticator);
   return app;
 }
 
-function registerRoutes(app: FastifyInstance, platform: Platform): void {
+function registerRoutes(
+  app: FastifyInstance,
+  platform: Platform,
+  authenticator: ApiKeyAuthenticator | undefined,
+): void {
   const { ledger, audit, permissions, spendGuard, rollback, forensics, evidence } = platform;
   const { decisionMemory, vendorRisk } = platform;
+  const auth = routeAuth(authenticator);
 
   // ---- meta -------------------------------------------------------------
   app.get('/api', async () => ({
@@ -110,71 +130,131 @@ function registerRoutes(app: FastifyInstance, platform: Platform): void {
   });
 
   // ---- raw ledger ingest ------------------------------------------------
-  app.post('/api/events', async (request, reply) => {
+  app.post('/api/events', { preHandler: auth(['ingest']) }, async (request, reply) => {
     const result = await ledger.append(request.body);
     if (!result.ok) return replyError(reply, result.error);
     return reply.code(201).send({ record: result.value });
   });
 
   // ---- audit ------------------------------------------------------------
-  app.get('/api/audit/events', async (request, reply) => {
+  app.get('/api/audit/events', { preHandler: auth(['operator']) }, async (request, reply) => {
     const records = await audit.search(eventQueryFrom(request.query as Record<string, unknown>));
     return reply.send(records);
   });
 
-  app.get('/api/audit/events/:seq', async (request, reply) => {
+  app.get('/api/audit/events/:seq', { preHandler: auth(['operator']) }, async (request, reply) => {
     const seq = asNumber((request.params as Record<string, unknown>)['seq']);
     if (seq === undefined) return replyError(reply, validationError('seq must be a number'));
     const record = await audit.get(seq);
     return record ? reply.send(record) : reply.code(404).send({ error: { code: 'NOT_FOUND' } });
   });
 
-  app.get('/api/audit/summary', async (_request, reply) => reply.send(await audit.summary()));
+  app.get('/api/audit/summary', { preHandler: auth(['operator']) }, async (_request, reply) =>
+    reply.send(await audit.summary()),
+  );
 
-  app.get('/api/audit/verify', async (_request, reply) => reply.send(await audit.verify()));
+  app.get('/api/audit/verify', { preHandler: auth(['operator']) }, async (_request, reply) =>
+    reply.send(await audit.verify()),
+  );
 
-  app.get('/api/audit/export', async (_request, reply) => {
+  app.get('/api/audit/export', { preHandler: auth(['operator']) }, async (_request, reply) => {
     const ndjson = await audit.exportNdjson();
     return reply.header('content-type', 'application/x-ndjson').send(ndjson);
   });
 
   // ---- permissions ------------------------------------------------------
-  app.get('/api/permissions/policies', async (_request, reply) =>
-    reply.send(permissions.listPolicies()),
+  app.get(
+    '/api/permissions/policies',
+    { preHandler: auth(['operator']) },
+    async (_request, reply) => reply.send(permissions.listPolicies()),
   );
 
-  app.post('/api/permissions/policies', async (request, reply) =>
-    replyResult(reply, permissions.addPolicy(request.body)),
+  app.post('/api/permissions/policies', { preHandler: auth(['admin']) }, async (request, reply) => {
+    const candidate = withGeneratedId(request.body, 'pol', platform);
+    const parsed = PolicySchema.safeParse(candidate);
+    if (!parsed.success) return replyError(reply, validationError('invalid policy'));
+
+    const audit = await recordAdminAction(platform, request.principal, {
+      action: 'policy.upserted',
+      targetType: 'policy',
+      targetId: parsed.data.id,
+      details: { effect: parsed.data.effect, name: parsed.data.name },
+    });
+    if (!audit.ok) {
+      return replyError(reply, audit.error);
+    }
+    const result = permissions.addPolicy(parsed.data);
+    return replyResult(reply, result);
+  });
+
+  app.delete(
+    '/api/permissions/policies/:id',
+    { preHandler: auth(['admin']) },
+    async (request, reply) => {
+      const id = String((request.params as Record<string, unknown>)['id']);
+      const existing = permissions.listPolicies().find((policy) => policy.id === id);
+      if (!existing) return reply.code(404).send({ removed: false });
+      const audit = await recordAdminAction(platform, request.principal, {
+        action: 'policy.removed',
+        targetType: 'policy',
+        targetId: id,
+      });
+      if (!audit.ok) {
+        return replyError(reply, audit.error);
+      }
+      permissions.removePolicy(id);
+      return reply.send({ removed: true });
+    },
   );
 
-  app.delete('/api/permissions/policies/:id', async (request, reply) => {
-    const id = String((request.params as Record<string, unknown>)['id']);
-    const removed = permissions.removePolicy(id);
-    return removed ? reply.send({ removed: true }) : reply.code(404).send({ removed: false });
-  });
+  app.post(
+    '/api/permissions/evaluate',
+    { preHandler: auth(['operator']) },
+    async (request, reply) => {
+      const parsed = parseActionWithActor(request.body);
+      if (!parsed.ok) return replyError(reply, parsed.error);
+      return reply.send(permissions.evaluate(parsed.action, parsed.opts));
+    },
+  );
 
-  app.post('/api/permissions/evaluate', async (request, reply) => {
-    const parsed = parseActionWithActor(request.body);
-    if (!parsed.ok) return replyError(reply, parsed.error);
-    return reply.send(permissions.evaluate(parsed.action, parsed.opts));
-  });
-
-  app.post('/api/permissions/enforce', async (request, reply) => {
+  app.post('/api/permissions/enforce', { preHandler: auth(['ingest']) }, async (request, reply) => {
     const parsed = parseActionWithActor(request.body);
     if (!parsed.ok) return replyError(reply, parsed.error);
     return replyResult(reply, await permissions.enforce(parsed.action, parsed.opts));
   });
 
   // ---- spend guard ------------------------------------------------------
-  app.get('/api/spend/budgets', async (_request, reply) => reply.send(spendGuard.listBudgets()));
-
-  app.post('/api/spend/budgets', async (request, reply) =>
-    replyResult(reply, spendGuard.setBudget(request.body)),
+  app.get('/api/spend/budgets', { preHandler: auth(['operator']) }, async (_request, reply) =>
+    reply.send(spendGuard.listBudgets()),
   );
 
-  app.get('/api/spend/status', async (_request, reply) => reply.send(await spendGuard.status()));
+  app.post('/api/spend/budgets', { preHandler: auth(['admin']) }, async (request, reply) => {
+    const candidate = withGeneratedId(request.body, 'bud', platform);
+    const parsed = BudgetSchema.safeParse(candidate);
+    if (!parsed.success) return replyError(reply, validationError('invalid budget'));
 
-  app.post('/api/spend/charge', async (request, reply) => {
+    const audit = await recordAdminAction(platform, request.principal, {
+      action: 'budget.upserted',
+      targetType: 'budget',
+      targetId: parsed.data.id,
+      details: {
+        name: parsed.data.name,
+        scope: parsed.data.scope,
+        limit: parsed.data.limit,
+      },
+    });
+    if (!audit.ok) {
+      return replyError(reply, audit.error);
+    }
+    const result = spendGuard.setBudget(parsed.data);
+    return replyResult(reply, result);
+  });
+
+  app.get('/api/spend/status', { preHandler: auth(['operator']) }, async (_request, reply) =>
+    reply.send(await spendGuard.status()),
+  );
+
+  app.post('/api/spend/charge', { preHandler: auth(['ingest']) }, async (request, reply) => {
     const parsed = AuthorizeInputSchema.safeParse(request.body);
     if (!parsed.success) return replyError(reply, validationError('invalid charge input'));
     const { actorId, amount, labels, actionId } = parsed.data;
@@ -190,11 +270,11 @@ function registerRoutes(app: FastifyInstance, platform: Platform): void {
   });
 
   // ---- decision memory --------------------------------------------------
-  app.post('/api/decisions', async (request, reply) =>
+  app.post('/api/decisions', { preHandler: auth(['ingest']) }, async (request, reply) =>
     replyResult(reply, await decisionMemory.record(request.body)),
   );
 
-  app.get('/api/decisions', async (request, reply) => {
+  app.get('/api/decisions', { preHandler: auth(['operator']) }, async (request, reply) => {
     const q = request.query as Record<string, unknown>;
     const opts: { actorId?: string; limit?: number } = {};
     const actorId = asString(q['actorId']);
@@ -204,7 +284,7 @@ function registerRoutes(app: FastifyInstance, platform: Platform): void {
     return reply.send(await decisionMemory.list(opts));
   });
 
-  app.get('/api/decisions/recall', async (request, reply) => {
+  app.get('/api/decisions/recall', { preHandler: auth(['operator']) }, async (request, reply) => {
     const q = request.query as Record<string, unknown>;
     const query: { text?: string; actorId?: string; limit?: number } = {};
     const text = asString(q['text']);
@@ -217,53 +297,69 @@ function registerRoutes(app: FastifyInstance, platform: Platform): void {
   });
 
   // ---- evidence ---------------------------------------------------------
-  app.post('/api/evidence', async (request, reply) =>
+  app.post('/api/evidence', { preHandler: auth(['ingest']) }, async (request, reply) =>
     replyResult(reply, await evidence.attach(request.body)),
   );
 
-  app.get('/api/evidence', async (_request, reply) => reply.send(await evidence.list()));
+  app.get('/api/evidence', { preHandler: auth(['operator']) }, async (_request, reply) =>
+    reply.send(await evidence.list()),
+  );
 
-  app.get('/api/evidence/:id/trace', async (request, reply) => {
+  app.get('/api/evidence/:id/trace', { preHandler: auth(['operator']) }, async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
     return replyResult(reply, await evidence.trace(id));
   });
 
-  app.post('/api/evidence/:id/verify', async (request, reply) => {
-    const id = String((request.params as Record<string, unknown>)['id']);
-    const content = (request.body as { content?: unknown })?.content;
-    if (typeof content !== 'string') {
-      return replyError(reply, validationError('content (string) is required'));
-    }
-    return replyResult(reply, await evidence.verifyContent(id, content));
-  });
+  app.post(
+    '/api/evidence/:id/verify',
+    { preHandler: auth(['operator']) },
+    async (request, reply) => {
+      const id = String((request.params as Record<string, unknown>)['id']);
+      const content = (request.body as { content?: unknown })?.content;
+      if (typeof content !== 'string') {
+        return replyError(reply, validationError('content (string) is required'));
+      }
+      return replyResult(reply, await evidence.verifyContent(id, content));
+    },
+  );
 
   // ---- vendor risk ------------------------------------------------------
-  app.post('/api/vendors', async (request, reply) =>
+  app.post('/api/vendors', { preHandler: auth(['admin']) }, async (request, reply) =>
     replyResult(reply, await vendorRisk.register(request.body)),
   );
 
-  app.get('/api/vendors', async (_request, reply) => reply.send(await vendorRisk.listVendors()));
+  app.get('/api/vendors', { preHandler: auth(['operator']) }, async (_request, reply) =>
+    reply.send(await vendorRisk.listVendors()),
+  );
 
-  app.post('/api/vendors/signals', async (request, reply) =>
+  app.post('/api/vendors/signals', { preHandler: auth(['ingest']) }, async (request, reply) =>
     replyResult(reply, await vendorRisk.recordSignal(request.body)),
   );
 
-  app.get('/api/vendors/:id/signals', async (request, reply) => {
-    const id = String((request.params as Record<string, unknown>)['id']);
-    return reply.send(await vendorRisk.signalsFor(id));
-  });
+  app.get(
+    '/api/vendors/:id/signals',
+    { preHandler: auth(['operator']) },
+    async (request, reply) => {
+      const id = String((request.params as Record<string, unknown>)['id']);
+      return reply.send(await vendorRisk.signalsFor(id));
+    },
+  );
 
-  app.get('/api/vendor-risk/assess', async (_request, reply) =>
+  app.get('/api/vendor-risk/assess', { preHandler: auth(['operator']) }, async (_request, reply) =>
     reply.send(await vendorRisk.assess()),
   );
 
-  app.get('/api/vendor-risk/:id/score', async (request, reply) => {
-    const id = String((request.params as Record<string, unknown>)['id']);
-    return replyResult(reply, await vendorRisk.score(id));
-  });
+  app.get(
+    '/api/vendor-risk/:id/score',
+    { preHandler: auth(['operator']) },
+    async (request, reply) => {
+      const id = String((request.params as Record<string, unknown>)['id']);
+      return replyResult(reply, await vendorRisk.score(id));
+    },
+  );
 
   // ---- forensics --------------------------------------------------------
-  app.get('/api/forensics/incident', async (request, reply) => {
+  app.get('/api/forensics/incident', { preHandler: auth(['operator']) }, async (request, reply) => {
     const correlationId = asString((request.query as Record<string, unknown>)['correlationId']);
     if (correlationId === undefined) {
       return replyError(reply, validationError('correlationId is required'));
@@ -271,36 +367,103 @@ function registerRoutes(app: FastifyInstance, platform: Platform): void {
     return reply.send(await forensics.incident(correlationId));
   });
 
-  app.get('/api/forensics/timeline', async (request, reply) => {
+  app.get('/api/forensics/timeline', { preHandler: auth(['operator']) }, async (request, reply) => {
     const entries = await forensics.timeline(
       eventQueryFrom(request.query as Record<string, unknown>),
     );
     return reply.send(entries);
   });
 
-  app.get('/api/forensics/cause/:causationId', async (request, reply) => {
-    const id = String((request.params as Record<string, unknown>)['causationId']);
-    return reply.send(await forensics.causeChain(id));
-  });
+  app.get(
+    '/api/forensics/cause/:causationId',
+    { preHandler: auth(['operator']) },
+    async (request, reply) => {
+      const id = String((request.params as Record<string, unknown>)['causationId']);
+      return reply.send(await forensics.causeChain(id));
+    },
+  );
 
   // ---- rollback ---------------------------------------------------------
-  app.post('/api/rollback/plan/action/:actionId', async (request, reply) => {
-    const id = String((request.params as Record<string, unknown>)['actionId']);
-    return replyResult(reply, await rollback.planForAction(id));
-  });
+  app.post(
+    '/api/rollback/plan/action/:actionId',
+    { preHandler: auth(['operator']) },
+    async (request, reply) => {
+      const id = String((request.params as Record<string, unknown>)['actionId']);
+      return replyResult(reply, await rollback.planForAction(id));
+    },
+  );
 
-  app.get('/api/rollback/plan/correlation/:correlationId', async (request, reply) => {
-    const id = String((request.params as Record<string, unknown>)['correlationId']);
-    return reply.send(await rollback.planForCorrelation(id));
-  });
+  app.get(
+    '/api/rollback/plan/correlation/:correlationId',
+    { preHandler: auth(['operator']) },
+    async (request, reply) => {
+      const id = String((request.params as Record<string, unknown>)['correlationId']);
+      return reply.send(await rollback.planForCorrelation(id));
+    },
+  );
 
-  app.post('/api/rollback/execute', async (request, reply) => {
+  app.post('/api/rollback/execute', { preHandler: auth(['operator']) }, async (request, reply) => {
     const plan = (request.body as { plan?: unknown })?.plan;
     if (plan === null || typeof plan !== 'object') {
       return replyError(reply, validationError('plan is required'));
     }
     return reply.send(await rollback.execute(plan as Parameters<typeof rollback.execute>[0]));
   });
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    principal?: ApiKeyPrincipal;
+  }
+}
+
+interface AdminActionInput {
+  readonly action: string;
+  readonly targetType: string;
+  readonly targetId?: string;
+  readonly details?: Record<string, unknown>;
+}
+
+function routeAuth(authenticator: ApiKeyAuthenticator | undefined) {
+  return (requiredRoles: readonly ServerRole[]) =>
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      if (!authenticator) return;
+      const rawSecret =
+        parseAuthHeader(request.headers.authorization) ??
+        parseAuthHeader(request.headers['x-veritrail-api-key']);
+      const result = authenticator.authenticate(rawSecret, requiredRoles);
+      if (result.ok) {
+        request.principal = result.principal;
+        return;
+      }
+      const status = result.failure.reason === 'forbidden' ? 403 : 401;
+      return reply.code(status).send({ error: result.failure.error.toJSON() });
+    };
+}
+
+async function recordAdminAction(
+  platform: Platform,
+  principal: ApiKeyPrincipal | undefined,
+  input: AdminActionInput,
+): ReturnType<Platform['ledger']['append']> {
+  const actorId = principal?.actorId ?? 'server';
+  return platform.ledger.append({
+    type: 'admin.action',
+    actorId,
+    payload: {
+      action: input.action,
+      targetType: input.targetType,
+      ...(input.targetId !== undefined ? { targetId: input.targetId } : {}),
+      ...(input.details !== undefined ? { details: input.details } : {}),
+    },
+  });
+}
+
+function withGeneratedId(input: unknown, prefix: string, platform: Platform): unknown {
+  if (input === null || typeof input !== 'object') return input;
+  const record = input as Record<string, unknown>;
+  if ('id' in record) return input;
+  return { ...record, id: platform.ctx.ids.next(prefix) };
 }
 
 type ParsedActionWithActor =
