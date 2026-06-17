@@ -15,6 +15,7 @@
       "@veritrail/sdk": ["packages/sdk/src/index.ts"],
       "@veritrail/server": ["packages/server/src/index.ts"],
       "@veritrail/cli": ["packages/cli/src/index.ts"],
+      "@veritrail/relational-store": ["packages/relational-store/src/index.ts"],
       "@veritrail/audit": ["packages/modules/audit/src/index.ts"],
       "@veritrail/permissions": ["packages/modules/permissions/src/index.ts"],
       "@veritrail/spend-guard": ["packages/modules/spend-guard/src/index.ts"],

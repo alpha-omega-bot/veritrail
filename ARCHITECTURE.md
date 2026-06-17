@@ -121,14 +121,17 @@ Full detail in [`docs/concepts/ledger.md`](./docs/concepts/ledger.md).
 
 ### 3.3 Storage
 
-The `EventStore` port has two reference adapters, both pure-JS (no native deps):
+The `EventStore` port has three reference adapters, all dependency-light:
 
 - `InMemoryEventStore` — volatile, the default for tests and ephemeral use.
 - `FileEventStore` — durable, append-only **JSON Lines** (one record per line).
   The on-disk form mirrors the ledger's semantics and is trivially auditable.
+- `RelationalEventStore` (`@veritrail/relational-store`) — SQL table storage
+  behind a small transaction-capable SQL executor port. It ships SQLite/Postgres
+  dialect builders and keeps concrete database drivers out of the trust core.
 
-A relational adapter (SQLite/Postgres) implementing the same port is on the
-roadmap; nothing above the port changes when it lands.
+Concrete SQLite/Postgres driver wrappers and operational migrations remain on
+the roadmap; nothing above the port changes when they land.
 
 ## 4. The module pattern
 
