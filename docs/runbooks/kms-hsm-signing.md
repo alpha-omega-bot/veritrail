@@ -10,8 +10,8 @@ remote key-custody client and verifies locally with trusted public keys, so
 1. Create an Ed25519 signing key in the chosen KMS/HSM provider.
 2. Record a stable key id such as `kms-prod-2026-06`.
 3. Export or register the public verification key for that key id.
-4. Implement `RemoteSignerClient.sign(data: Buffer): Promise<Buffer>` by calling
-   the provider's sign API for the configured key.
+4. Use a provider adapter from `@veritrail/provider-signers`, or implement
+   `RemoteSignerClient.sign(data: Buffer): Promise<Buffer>` in deployment code.
 5. Construct the ledger with `RemoteEd25519Signer`.
 
 ```ts
@@ -47,5 +47,17 @@ append signing failures because the system has stopped accepting signed writes.
 ## Provider Wrappers
 
 Provider-specific SDK packages are intentionally not dependencies of
-`@veritrail/core`. Keep AWS KMS, GCP Cloud KMS, Azure Key Vault, or HSM SDK usage
-in edge packages or deployment code that implements `RemoteSignerClient`.
+`@veritrail/core`. The `@veritrail/provider-signers` package provides thin
+`RemoteSignerClient` adapters around SDK-compatible client shapes:
+
+- `AwsKmsRemoteSignerClient` wraps `@aws-sdk/client-kms` `KMSClient` +
+  `SignCommand` and uses `ED25519_SHA_512` with `MessageType: 'RAW'`.
+- `GcpKmsRemoteSignerClient` wraps a Cloud KMS
+  `KeyManagementServiceClient.asymmetricSign` call.
+- `AzureKeyVaultRemoteSignerClient` wraps a Key Vault
+  `CryptographyClient.signData` call.
+- `HsmRemoteSignerClient` wraps a generic HSM/PKCS#11-shaped session with
+  `sign(keyHandle, data, mechanism)`.
+
+Install only the SDKs used by your deployment and pass their clients into these
+adapters; Veritrail does not bundle every cloud SDK into the trust core.
