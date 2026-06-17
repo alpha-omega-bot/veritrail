@@ -11,7 +11,7 @@ project over.
 | **Ledger**  | `Ledger`, `verifyChain`, `IntegrityReport`, `LedgerRecord`, hashing                                  |
 | **Domain**  | Zod schemas + types: `Action`, `Decision`, `Evidence`, `Policy`, `Budget`, `Vendor`, `EventInput`, … |
 | **Storage** | `EventStore` port, `InMemoryEventStore`, `FileEventStore`                                            |
-| **Ports**   | `Clock`, `IdGenerator`, `Logger`, `Signer` (+ default/test impls)                                    |
+| **Ports**   | `Clock`, `IdGenerator`, `Logger`, `Signer` (`HmacSigner`, `Ed25519Signer`)                           |
 | **Utils**   | `Result`, `VeritrailError`, `canonicalize`, `sha256Hex`                                              |
 
 `FileEventStore` persists ledger records as append-only JSON Lines. Each append
@@ -50,6 +50,8 @@ console.log(report.ok, report.head); // true, <chain head hash>
   A single altered record surfaces as one `hash_mismatch`; re-hashing it surfaces
   as a downstream `chain_break`.
 - **Forgery-resistant (optional)**: provide a `Signer` to sign every record.
+  `HmacSigner` supports symmetric deployments; `Ed25519Signer` supports
+  asymmetric signing and verification across key rotation via `signerKeyId`.
 - **Anchoring (roadmap)**: a fully-rewritten _unsigned_ chain is internally
   consistent; compare `report.head` against an externally anchored value to
   detect wholesale rewrites. External anchoring is on the roadmap.

@@ -16,7 +16,7 @@ The trust core and a coherent, tested platform skeleton.
 - ✅ **Domain model** as Zod schemas with inferred types; safe defaults; money as
   integer minor units.
 - ✅ **Storage port** with in-memory and durable append-only JSONL adapters.
-- ✅ Runtime **ports**: clock, id generator, logger, signer (HMAC).
+- ✅ Runtime **ports**: clock, id generator, logger, signer (HMAC + Ed25519).
 - ✅ **Audit**, **Permissions** (deny-by-default), and **Spend Guard** (hard-stop)
   fully implemented and tested.
 - ✅ **Rollback, Forensics, Evidence, Decision Memory, Vendor Risk** scaffolded
@@ -32,8 +32,10 @@ Make the system durable, secure, and operable for a first real deployment.
 - ✅ **Relational `EventStore`** behind the existing port: dependency-light SQL
   adapter, migrations, SQLite/Postgres dialect builders, and concrete
   SQLite/Postgres driver wrappers with documented writer-safety guarantees.
-- ⬜ **Asymmetric signing** (Ed25519) via a `Signer` adapter backed by KMS/HSM;
-  key rotation and `signerKeyId` chains.
+- ✅ **Asymmetric signing**: local Ed25519 `Signer` adapter with `signerKeyId`
+  verification and trusted public keys for key rotation.
+- ⬜ **KMS/HSM signing**: remote-backed signer adapters and operator runbooks for
+  managed key custody and rotation.
 - ⬜ **External anchoring**: periodically publish the chain head (e.g. to a
   transparency log / object store / notary) to detect wholesale rewrites of an
   unsigned chain.

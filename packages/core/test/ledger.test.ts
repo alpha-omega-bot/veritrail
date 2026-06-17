@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeRecordHash,
   createInMemoryLedger,
+  Ed25519Signer,
   FixedClock,
   HmacSigner,
   InMemoryEventStore,
@@ -12,7 +13,7 @@ import {
   type LedgerRecord,
 } from '@veritrail/core';
 
-function freshLedger(signer?: HmacSigner): Ledger {
+function freshLedger(signer?: HmacSigner | Ed25519Signer): Ledger {
   return new Ledger({
     store: new InMemoryEventStore(),
     clock: new FixedClock(1_700_000_000_000),
@@ -120,6 +121,44 @@ describe('Ledger signing', () => {
     const report = verifyChain(records, { signer });
     expect(report.ok).toBe(false);
     expect(report.issues.some((i) => i.kind === 'signature_invalid')).toBe(true);
+  });
+
+  it('signs records with Ed25519 and rejects forged or wrong-key signatures', async () => {
+    const signer = Ed25519Signer.generate({ keyId: 'ed-current' });
+    const ledger = freshLedger(signer);
+    await appendNotes(ledger, ['a', 'b']);
+
+    const clean = await ledger.verify();
+    expect(clean.ok).toBe(true);
+    const head = await ledger.head();
+    expect(head!.signature).toMatch(/^[0-9a-f]+$/);
+    expect(head!.signerKeyId).toBe('ed-current');
+
+    const records = structuredClone(await ledger.readAll());
+    records[1] = { ...records[1]!, signature: 'deadbeef'.repeat(16) };
+    const forged = verifyChain(records, { signer });
+    expect(forged.ok).toBe(false);
+    expect(forged.issues.some((i) => i.kind === 'signature_invalid')).toBe(true);
+
+    const wrongKey = Ed25519Signer.generate({ keyId: 'ed-current' });
+    const wrongKeyReport = verifyChain(await ledger.readAll(), { signer: wrongKey });
+    expect(wrongKeyReport.ok).toBe(false);
+    expect(wrongKeyReport.issues.some((i) => i.kind === 'signature_invalid')).toBe(true);
+  });
+
+  it('verifies Ed25519 records signed before key rotation', async () => {
+    const previous = Ed25519Signer.generate({ keyId: 'ed-previous' });
+    const previousLedger = freshLedger(previous);
+    await appendNotes(previousLedger, ['before rotation']);
+    const previousRecord = (await previousLedger.readAll())[0]!;
+
+    const current = Ed25519Signer.generate({
+      keyId: 'ed-current',
+      trustedPublicKeys: { 'ed-previous': previous.publicKey()! },
+    });
+    const report = verifyChain([previousRecord], { signer: current });
+
+    expect(report.ok).toBe(true);
   });
 });
 

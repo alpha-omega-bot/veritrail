@@ -35,8 +35,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       (single-node) and Postgres driver wrappers documenting and enforcing
       transaction isolation/concurrent-writer safety. Nothing above the port
       changed.
-- [ ] **Asymmetric signing.** Add an Ed25519 `Signer` (KMS/HSM-backed) with key
-      rotation and `signerKeyId` chains, alongside the existing HMAC signer.
+- [x] **Asymmetric signing.** Added a local Ed25519 `Signer` alongside HMAC.
+      Verification is `signerKeyId`-aware and supports trusted previous public
+      keys for key rotation.
+- [ ] **KMS/HSM signing.** Add remote-backed `Signer` adapters and operator
+      runbooks for managed key custody and rotation.
 - [ ] **External anchoring.** Periodically publish the chain head to an external
       store/transparency log so a wholesale rewrite of an _unsigned_ chain is
       detectable. Document the operator runbook.
@@ -155,6 +158,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Added local Ed25519 ledger signing in `@veritrail/core`.
+  `verifyChain` now passes each record's `signerKeyId` into the signer, HMAC
+  rejects wrong key ids, and Ed25519 verification can trust previous public keys
+  so records signed before rotation still verify. Added tests for forged
+  Ed25519 signatures, wrong-key verification failure, malformed HMAC input, and
+  rotation verification. **Next:** continue Milestone 1 with KMS/HSM signer
+  adapters or external anchoring.
 - **2026-06-17** — Added concrete relational driver wrappers in
   `@veritrail/relational-store`: SQLite uses `BEGIN IMMEDIATE`/`EXCLUSIVE`
   around the append path, and Postgres uses serializable transactions plus a

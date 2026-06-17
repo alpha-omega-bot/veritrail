@@ -25,8 +25,9 @@ describe('HmacSigner.verify hardening', () => {
     expect(signer.verify('data', 'z'.repeat(sig.length))).toBe(false);
   });
 
-  it('returns false for a wrong-length signature', () => {
+  it('returns false for a wrong-length signature or wrong key id', () => {
     expect(signer.verify('data', 'abc')).toBe(false);
+    expect(signer.verify('data', signer.sign('data'), 'other-key')).toBe(false);
   });
 });
 
