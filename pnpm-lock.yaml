@@ -167,6 +167,12 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
 
+  packages/relational-store:
+    dependencies:
+      '@veritrail/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/sdk:
     dependencies:
       '@veritrail/core':

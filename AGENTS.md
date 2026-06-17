@@ -70,6 +70,7 @@ veritrail/  (pnpm workspace, TypeScript ESM, Node >=20.11)
 │  ├─ sdk/                  @veritrail/sdk    — Governor (in-process instrumentation) + HTTP client
 │  ├─ server/              @veritrail/server — Fastify REST API mounting every module
 │  ├─ cli/                  @veritrail/cli    — operator CLI (verify/summary/events/export/append/incident/vendor-risk)
+│  ├─ relational-store/     @veritrail/relational-store — SQL EventStore adapter behind the core port
 │  └─ modules/
 │     ├─ audit/  permissions/  spend-guard/        (GA)
 │     └─ rollback/  forensics/  evidence/  decision-memory/  vendor-risk/   (scaffold → bring to GA)

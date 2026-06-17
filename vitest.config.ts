@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       '@veritrail/core': src('./packages/core/src/index.ts'),
       '@veritrail/sdk': src('./packages/sdk/src/index.ts'),
+      '@veritrail/relational-store': src('./packages/relational-store/src/index.ts'),
       '@veritrail/audit': src('./packages/modules/audit/src/index.ts'),
       '@veritrail/permissions': src('./packages/modules/permissions/src/index.ts'),
       '@veritrail/spend-guard': src('./packages/modules/spend-guard/src/index.ts'),

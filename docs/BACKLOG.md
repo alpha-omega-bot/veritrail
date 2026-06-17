@@ -30,9 +30,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       append-mode file handles, file `fsync` before acknowledgement,
       rollback/truncation on failed durable append, and torn-tail truncation
       during open before future appends. (review: core/medium)
-- [ ] **Relational `EventStore`.** Implement SQLite (single-node) and Postgres
-      (HA) adapters behind the existing `EventStore` port; migrations;
-      concurrent-writer safety. Nothing above the port should change.
+- [ ] **Relational `EventStore`.** SQL `EventStore` adapter + migrations +
+      SQLite/Postgres dialect builders are in place. Remaining work: concrete
+      SQLite (single-node) and Postgres (HA) driver wrappers with documented
+      transaction isolation/concurrent-writer safety. Nothing above the port
+      should change.
 - [ ] **Asymmetric signing.** Add an Ed25519 `Signer` (KMS/HSM-backed) with key
       rotation and `signerKeyId` chains, alongside the existing HMAC signer.
 - [ ] **External anchoring.** Periodically publish the chain head to an external
@@ -148,6 +150,12 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Started the relational `EventStore` milestone with
+  `@veritrail/relational-store`: a dependency-light SQL adapter behind the
+  existing core `EventStore` port, migration SQL, SQLite/Postgres dialect
+  builders, canonical record storage, transaction-scoped append checks, and
+  uniqueness-race conflict mapping tests. **Next:** add the concrete SQLite
+  single-node driver wrapper, then Postgres HA wrapper.
 - **2026-06-17** — Started Milestone 1 durable file append hardening. Replaced
   `FileEventStore.append`'s plain `appendFile` path with explicit append-mode
   file handles, file `fsync` before acknowledgement, rollback/truncation on

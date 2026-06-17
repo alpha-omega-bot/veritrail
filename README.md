@@ -111,6 +111,7 @@ veritrail/
 │  ├─ sdk/                  @veritrail/sdk    — typed in-process instrumentation + HTTP client
 │  ├─ server/               @veritrail/server — Fastify REST API mounting all modules
 │  ├─ cli/                  @veritrail/cli    — operator CLI (ingest, verify, query, policy, budget)
+│  ├─ relational-store/     @veritrail/relational-store — SQL EventStore adapter
 │  └─ modules/
 │     ├─ audit/             @veritrail/audit
 │     ├─ permissions/       @veritrail/permissions
