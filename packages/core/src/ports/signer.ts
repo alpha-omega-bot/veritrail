@@ -22,7 +22,7 @@ export interface Signer {
   /** Stable identifier for the signing key, recorded alongside the signature. */
   readonly keyId: string;
   /** Produce a detached signature (hex) over `data`. */
-  sign(data: string): string;
+  sign(data: string): string | Promise<string>;
   /** Verify a detached signature produced by `sign`. */
   verify(data: string, signature: string, keyId?: string): boolean;
 }
@@ -122,6 +122,66 @@ export class Ed25519Signer implements Signer {
 
   sign(data: string): string {
     return cryptoSign(null, Buffer.from(data, 'utf8'), this.#privateKey).toString('hex');
+  }
+
+  verify(data: string, signature: string, keyId = this.keyId): boolean {
+    if (!/^[0-9a-f]+$/.test(signature)) return false;
+    const publicKey = this.#publicKeys.get(keyId);
+    if (publicKey === undefined) return false;
+    try {
+      return cryptoVerify(
+        null,
+        Buffer.from(data, 'utf8'),
+        publicKey,
+        Buffer.from(signature, 'hex'),
+      );
+    } catch {
+      return false;
+    }
+  }
+}
+
+export interface RemoteSignerClient {
+  /** Produce a detached signature over `data` using a managed remote key. */
+  sign(data: Buffer): Promise<Buffer>;
+}
+
+export interface RemoteEd25519SignerOptions {
+  /** Stable identifier recorded alongside signatures produced by the remote key. */
+  readonly keyId: string;
+  /** Client wrapping KMS/HSM signing for the configured key. */
+  readonly client: RemoteSignerClient;
+  /** Public key for verifying signatures produced by the current remote key. */
+  readonly publicKey: Ed25519KeyInput;
+  /** Previous public keys accepted during verification, keyed by `signerKeyId`. */
+  readonly trustedPublicKeys?:
+    | ReadonlyMap<string, Ed25519KeyInput>
+    | Record<string, Ed25519KeyInput>;
+}
+
+/**
+ * Ed25519 signer adapter for remote key custody. Signing is delegated to a
+ * KMS/HSM client, while verification remains local against configured public
+ * keys so ledger verification does not depend on remote service availability.
+ */
+export class RemoteEd25519Signer implements Signer {
+  readonly algorithm = 'Ed25519-Remote';
+  readonly keyId: string;
+  readonly #client: RemoteSignerClient;
+  readonly #publicKeys = new Map<string, KeyObject>();
+
+  constructor(options: RemoteEd25519SignerOptions) {
+    this.keyId = options.keyId;
+    this.#client = options.client;
+    this.#publicKeys.set(this.keyId, toPublicKey(options.publicKey));
+    for (const [keyId, publicKey] of trustedKeyEntries(options.trustedPublicKeys)) {
+      this.#publicKeys.set(keyId, toPublicKey(publicKey));
+    }
+  }
+
+  async sign(data: string): Promise<string> {
+    const signature = await this.#client.sign(Buffer.from(data, 'utf8'));
+    return signature.toString('hex');
   }
 
   verify(data: string, signature: string, keyId = this.keyId): boolean {

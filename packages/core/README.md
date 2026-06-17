@@ -52,6 +52,8 @@ console.log(report.ok, report.head); // true, <chain head hash>
 - **Forgery-resistant (optional)**: provide a `Signer` to sign every record.
   `HmacSigner` supports symmetric deployments; `Ed25519Signer` supports
   asymmetric signing and verification across key rotation via `signerKeyId`.
+  `RemoteEd25519Signer` delegates signing to KMS/HSM clients while keeping
+  verification local.
 - **Anchoring (roadmap)**: a fully-rewritten _unsigned_ chain is internally
   consistent; compare `report.head` against an externally anchored value to
   detect wholesale rewrites. External anchoring is on the roadmap.

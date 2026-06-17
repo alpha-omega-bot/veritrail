@@ -4,7 +4,10 @@ export { noopLogger, ConsoleLogger, type Logger, type LogLevel, type LogFields }
 export {
   Ed25519Signer,
   HmacSigner,
+  RemoteEd25519Signer,
   type Ed25519KeyInput,
   type Ed25519SignerOptions,
+  type RemoteEd25519SignerOptions,
+  type RemoteSignerClient,
   type Signer,
 } from './signer.js';

@@ -34,8 +34,10 @@ Make the system durable, secure, and operable for a first real deployment.
   SQLite/Postgres driver wrappers with documented writer-safety guarantees.
 - ✅ **Asymmetric signing**: local Ed25519 `Signer` adapter with `signerKeyId`
   verification and trusted public keys for key rotation.
-- ⬜ **KMS/HSM signing**: remote-backed signer adapters and operator runbooks for
-  managed key custody and rotation.
+- ✅ **KMS/HSM signing interface**: `RemoteEd25519Signer` delegates signing to a
+  remote key-custody client while verifying locally; operator runbook documented.
+- ⬜ **Provider signer packages**: AWS KMS / GCP KMS / Azure Key Vault / HSM SDK
+  wrappers around the remote signer interface.
 - ⬜ **External anchoring**: periodically publish the chain head (e.g. to a
   transparency log / object store / notary) to detect wholesale rewrites of an
   unsigned chain.

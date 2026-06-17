@@ -7,7 +7,7 @@ import { noopLogger, type Logger } from '../ports/logger.js';
 import type { Signer } from '../ports/signer.js';
 import type { EventQuery, EventStore } from '../storage/event-store.js';
 import type { JsonValue } from '../util/canonical.js';
-import { validationError, type VeritrailError } from '../util/errors.js';
+import { storageError, validationError, type VeritrailError } from '../util/errors.js';
 import { Mutex } from '../util/mutex.js';
 import { err, ok, type Result } from '../util/result.js';
 import { verifyChain, type IntegrityReport } from './integrity.js';
@@ -84,8 +84,17 @@ export class Ledger implements LedgerReader, LedgerWriter {
 
       const unhashed = { seq, id, timestamp, event, prevHash };
       const hash = computeRecordHash(unhashed);
-      const signature = this.#signer ? this.#signer.sign(hash) : undefined;
-      const signerKeyId = this.#signer ? this.#signer.keyId : undefined;
+      let signature: string | undefined;
+      let signerKeyId: string | undefined;
+      if (this.#signer) {
+        try {
+          signature = await this.#signer.sign(hash);
+          signerKeyId = this.#signer.keyId;
+        } catch (cause) {
+          this.#logger.warn('ledger.append.sign_failed', { seq, type: event.type });
+          return err(storageError('failed to sign ledger record', cause));
+        }
+      }
 
       const record: LedgerRecord = {
         ...unhashed,

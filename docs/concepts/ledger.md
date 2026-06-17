@@ -254,9 +254,10 @@ const ledger = createInMemoryLedger({ signer: new HmacSigner(secret) });
 ```
 
 `Ed25519Signer` is asymmetric: it signs with a private key and verifies with
-public keys. The current signer `keyId` is recorded on each record as
-`signerKeyId`; verifiers can keep previous public keys in `trustedPublicKeys` so
-records signed before key rotation continue to verify.
+public keys. `RemoteEd25519Signer` delegates signing to a KMS/HSM-style client
+while verifying locally. The current signer `keyId` is recorded on each record
+as `signerKeyId`; verifiers can keep previous public keys in `trustedPublicKeys`
+so records signed before key rotation continue to verify.
 
 When a signer is configured, `append` signs every record's `hash`, stores the
 `signature` and `signerKeyId`, and `Ledger.verify()` passes the signer into

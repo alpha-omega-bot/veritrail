@@ -54,8 +54,8 @@ tagged release. Pin a version and watch releases for advisories.
 - **No authN/authZ in the server yet.** The v0.1 server is unauthenticated and
   intended for trusted networks / local use. Do not expose it publicly until
   Milestone 1 auth lands.
-- **HMAC signing uses a shared secret.** Verifiers hold the key; use the planned
-  asymmetric (Ed25519/KMS) signer for untrusted-verifier scenarios.
+- **HMAC signing uses a shared secret.** Verifiers hold the key; use Ed25519 or
+  `RemoteEd25519Signer` for untrusted-verifier scenarios.
 
 ## Hardening guidance
 
