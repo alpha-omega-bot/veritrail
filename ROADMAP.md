@@ -36,8 +36,9 @@ Make the system durable, secure, and operable for a first real deployment.
   verification and trusted public keys for key rotation.
 - ✅ **KMS/HSM signing interface**: `RemoteEd25519Signer` delegates signing to a
   remote key-custody client while verifying locally; operator runbook documented.
-- ⬜ **Provider signer packages**: AWS KMS / GCP KMS / Azure Key Vault / HSM SDK
-  wrappers around the remote signer interface.
+- ✅ **Provider signer package**: dependency-light `@veritrail/provider-signers`
+  adapters for AWS KMS, GCP Cloud KMS, Azure Key Vault, and HSM/PKCS#11-shaped
+  sessions around the remote signer interface.
 - ✅ **External anchoring**: core `AnchorStore` port, in-memory adapter, helpers
   to publish and verify ledger-head checkpoints, and operator runbook for
   transparency-log/object-store/notary deployments.

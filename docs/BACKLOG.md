@@ -41,8 +41,10 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
 - [x] **KMS/HSM signing interface.** Added `RemoteEd25519Signer`, a
       `RemoteSignerClient` port, local public-key verification, signing-failure
       error mapping, and an operator runbook for managed key custody/rotation.
-- [ ] **Provider signer packages.** Add AWS KMS / GCP KMS / Azure Key Vault /
-      HSM SDK wrappers around `RemoteSignerClient`.
+- [x] **Provider signer package.** Added `@veritrail/provider-signers` with
+      dependency-light AWS KMS, GCP Cloud KMS, Azure Key Vault, and HSM/PKCS#11
+      `RemoteSignerClient` adapters. Provider SDKs remain deployment dependencies,
+      not `@veritrail/core` dependencies.
 - [x] **External anchoring.** Core `AnchorStore` port, `InMemoryAnchorStore`,
       ledger-head publish/verify helpers, rewrite-detection tests, and operator
       runbook are in place. Production deployments still need concrete provider
@@ -163,6 +165,12 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Added `@veritrail/provider-signers`, a dependency-light package
+  with AWS KMS, GCP Cloud KMS, Azure Key Vault, and generic HSM/PKCS#11-shaped
+  `RemoteSignerClient` adapters for `RemoteEd25519Signer`. Provider SDKs stay out
+  of `@veritrail/core`; tests use fake SDK clients to lock command/request shape
+  and missing-signature failures. **Next:** continue Milestone 1 with server
+  authN/authZ.
 - **2026-06-17** — Added core external anchoring. `AnchorRecord` checkpoints,
   `AnchorStore`, `InMemoryAnchorStore`, `publishLedgerHeadAnchor()`, and
   `verifyLedgerAgainstLatestAnchor()` now let deployments publish independent
