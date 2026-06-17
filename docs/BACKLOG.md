@@ -30,11 +30,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       append-mode file handles, file `fsync` before acknowledgement,
       rollback/truncation on failed durable append, and torn-tail truncation
       during open before future appends. (review: core/medium)
-- [ ] **Relational `EventStore`.** SQL `EventStore` adapter + migrations +
-      SQLite/Postgres dialect builders are in place. Remaining work: concrete
-      SQLite (single-node) and Postgres (HA) driver wrappers with documented
+- [x] **Relational `EventStore`.** SQL `EventStore` adapter + migrations +
+      SQLite/Postgres dialect builders are in place, with concrete SQLite
+      (single-node) and Postgres driver wrappers documenting and enforcing
       transaction isolation/concurrent-writer safety. Nothing above the port
-      should change.
+      changed.
 - [ ] **Asymmetric signing.** Add an Ed25519 `Signer` (KMS/HSM-backed) with key
       rotation and `signerKeyId` chains, alongside the existing HMAC signer.
 - [ ] **External anchoring.** Periodically publish the chain head to an external
@@ -112,6 +112,11 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 - [ ] Console to GA (live data, filtering, saved queries, integrity badge backed
       by live verify).
+- [x] Remove internal engineering/maturity wording from user-facing console copy.
+      The frontend must not expose terms such as "Phase 1", "scaffold", "mock",
+      TODOs, roadmap labels, or session-only discussion. Use neutral operator
+      copy for connection/data availability instead. Known current debt:
+      `apps/console/src/components/Nav.tsx` footer and fallback-data notice.
 - [ ] SSE/websocket subscription over the ledger tail.
 - [ ] Alerting (budget breaches, denial spikes, vendor criticals) → email/Slack/webhook.
 - [ ] Scheduled audit/spend/vendor reports & exports.
@@ -150,6 +155,32 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Added concrete relational driver wrappers in
+  `@veritrail/relational-store`: SQLite uses `BEGIN IMMEDIATE`/`EXCLUSIVE`
+  around the append path, and Postgres uses serializable transactions plus a
+  transaction-scoped advisory lock. Added wrapper tests for protected head reads
+  and rollback-on-failure behavior, documented the driver APIs and writer-safety
+  guarantees, and cleaned user-facing console copy so offline data is described
+  as sample data rather than internal maturity/fallback wording. **Next:**
+  continue Milestone 1 with asymmetric signing or external anchoring.
+- **2026-06-17** — Handoff memory for the next session: loaded AGENTS.md and
+  durable project docs, synced `main`, installed dependencies, enabled the
+  pre-push hook, and kept the baseline green before feature work. After the PAT
+  scope was widened, enabled server-side branch protection on `main` and merged
+  the repository-safety PR; CodeQL remains artifact-based because private-repo
+  GitHub Advanced Security is not purchased. Completed and merged the durable
+  `FileEventStore.append` hardening PR and the initial
+  `@veritrail/relational-store` SQL adapter PR; both went through local verify,
+  PR CI (`verify (node 20)`, `verify (node 22)`, `ledger integrity gate`), and
+  squash/rebase merge. Previewed the existing React/Vite console from
+  `apps/console` on port 5173 via localtunnel; the user viewed it and confirmed
+  it is read-only. Product copy rule from the user: frontend UI must not expose
+  internal maturity labels or session-discussion language such as "Phase 1",
+  "scaffold", or "mock"; keep that in docs/backlog, not in the app UI. Preview
+  server and tunnel were stopped; repo was clean on `main...origin/main` before
+  writing this note. **Next:** continue P1 with the concrete SQLite single-node
+  relational store wrapper, then Postgres HA wrapper; separately clean the
+  console's internal-facing copy before treating the console as user-facing.
 - **2026-06-17** — Started the relational `EventStore` milestone with
   `@veritrail/relational-store`: a dependency-light SQL adapter behind the
   existing core `EventStore` port, migration SQL, SQLite/Postgres dialect

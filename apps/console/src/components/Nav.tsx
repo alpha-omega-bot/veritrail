@@ -47,7 +47,7 @@ export function Nav({ current }: NavProps) {
           );
         })}
       </ul>
-      <div className="nav__footer">Phase-1 scaffold · read-only</div>
+      <div className="nav__footer">Operator console</div>
     </nav>
   );
 }
