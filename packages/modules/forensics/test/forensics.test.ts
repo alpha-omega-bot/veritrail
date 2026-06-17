@@ -271,4 +271,20 @@ describe('summarize', () => {
     });
     expect(s).toBe('note: hello world');
   });
+
+  it('summarizes admin actions', () => {
+    const s = summarize({
+      type: 'admin.action',
+      actorId: 'operator-1',
+      labels: {},
+      payload: {
+        action: 'policy.upserted',
+        targetType: 'policy',
+        targetId: 'pol-1',
+        outcome: 'success',
+        reason: '',
+      },
+    });
+    expect(s).toBe('admin policy.upserted on policy pol-1 (success)');
+  });
 });

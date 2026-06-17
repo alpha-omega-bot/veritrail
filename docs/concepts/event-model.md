@@ -57,6 +57,7 @@ export const EVENT_TYPES = [
   'policy.evaluated',
   'budget.charged',
   'budget.exceeded',
+  'admin.action',
   'vendor.registered',
   'vendor.signal',
   'note',
@@ -67,22 +68,23 @@ Each row below lists the `payload` shape exactly as defined. All payload objects
 are `.strict()`. "default" means the schema fills the value when absent;
 "optional" means the field may be omitted entirely.
 
-| Event type           | Payload fields                                                                                                                            |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `action.proposed`    | `action: Action`                                                                                                                          |
-| `action.authorized`  | `actionId: Id`; `authorizedBy?: Id`; `policyId?: Id`                                                                                      |
-| `action.denied`      | `actionId: Id`; `reason: string` (default `''`); `policyId?: Id`                                                                          |
-| `action.executed`    | `actionId: Id`; `outcome: 'success' \| 'partial'` (default `'success'`); `durationMs?: int ≥ 0`; `cost?: Money`; `result?: JsonValue`     |
-| `action.failed`      | `actionId: Id`; `error: string` (min length 1); `durationMs?: int ≥ 0`                                                                    |
-| `action.rolled_back` | `actionId: Id`; `compensationActionId?: Id`; `reason: string` (default `''`)                                                              |
-| `decision.recorded`  | `decision: Decision`                                                                                                                      |
-| `evidence.attached`  | `evidence: Evidence`                                                                                                                      |
-| `policy.evaluated`   | `actionId: Id`; `effect: PolicyEffect` (`allow` \| `deny` \| `require_approval`); `matchedPolicyId?: Id`; `reason: string` (default `''`) |
-| `budget.charged`     | `scope: BudgetScope`; `amount: Money`; `budgetId?: Id`; `actionId?: Id`                                                                   |
-| `budget.exceeded`    | `budgetId: Id`; `scope: BudgetScope`; `attempted: Money`; `limit: Money`; `actionId?: Id`                                                 |
-| `vendor.registered`  | `vendor: Vendor`                                                                                                                          |
-| `vendor.signal`      | `signal: VendorSignal`                                                                                                                    |
-| `note`               | `text: string` (min length 1); `data?: JsonValue`                                                                                         |
+| Event type           | Payload fields                                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `action.proposed`    | `action: Action`                                                                                                                                                         |
+| `action.authorized`  | `actionId: Id`; `authorizedBy?: Id`; `policyId?: Id`                                                                                                                     |
+| `action.denied`      | `actionId: Id`; `reason: string` (default `''`); `policyId?: Id`                                                                                                         |
+| `action.executed`    | `actionId: Id`; `outcome: 'success' \| 'partial'` (default `'success'`); `durationMs?: int ≥ 0`; `cost?: Money`; `result?: JsonValue`                                    |
+| `action.failed`      | `actionId: Id`; `error: string` (min length 1); `durationMs?: int ≥ 0`                                                                                                   |
+| `action.rolled_back` | `actionId: Id`; `compensationActionId?: Id`; `reason: string` (default `''`)                                                                                             |
+| `decision.recorded`  | `decision: Decision`                                                                                                                                                     |
+| `evidence.attached`  | `evidence: Evidence`                                                                                                                                                     |
+| `policy.evaluated`   | `actionId: Id`; `effect: PolicyEffect` (`allow` \| `deny` \| `require_approval`); `matchedPolicyId?: Id`; `reason: string` (default `''`)                                |
+| `budget.charged`     | `scope: BudgetScope`; `amount: Money`; `budgetId?: Id`; `actionId?: Id`                                                                                                  |
+| `budget.exceeded`    | `budgetId: Id`; `scope: BudgetScope`; `attempted: Money`; `limit: Money`; `actionId?: Id`                                                                                |
+| `admin.action`       | `action: string`; `targetType: string`; `targetId?: Id`; `outcome: 'success' \| 'failure'` (default `'success'`); `reason: string` (default `''`); `details?: JsonValue` |
+| `vendor.registered`  | `vendor: Vendor`                                                                                                                                                         |
+| `vendor.signal`      | `signal: VendorSignal`                                                                                                                                                   |
+| `note`               | `text: string` (min length 1); `data?: JsonValue`                                                                                                                        |
 
 ### Referenced domain objects
 
@@ -163,6 +165,10 @@ and writes to this one stream.
 | **Evidence Tracing**   | `evidence.attached`                                                     | `evidence.attached`                                                            |
 | **Decision Memory**    | `decision.recorded`                                                     | `decision.recorded`                                                            |
 | **Vendor Risk**        | `vendor.registered`, `vendor.signal`                                    | `vendor.registered`, `vendor.signal`                                           |
+
+The HTTP server also writes `admin.action` for administrative configuration
+changes such as policy and budget updates. That event is a platform audit fact
+over the same ledger, not a separate capability store.
 
 A few cross-cutting notes:
 

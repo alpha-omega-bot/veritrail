@@ -51,7 +51,8 @@ We use STRIDE as a checklist.
 ### Spoofing
 
 - **S1 — Impersonate an actor/operator.** _Mitigation:_ server authN + per-actor
-  scoping. ⚠ Milestone 1; run behind an authenticated gateway until then.
+  scoping. ✔ API-key auth with route roles is implemented for the HTTP server;
+  OIDC and multi-tenant scoping remain future platform work.
 
 ### Repudiation
 
@@ -64,7 +65,8 @@ We use STRIDE as a checklist.
   payloads in v0.1; field-level redaction/encryption at the append boundary is
   Milestone 1. Protect the store with OS/storage controls. ⚠ **Residual risk.**
 - **I2 — Over-broad reads via the API.** _Mitigation:_ authZ + query scoping
-  (Milestone 1).
+  (Milestone 1). ✔ route-level API-key roles now protect read APIs when auth is
+  configured; tenant/project query scoping remains future platform work.
 
 ### Denial of service
 

@@ -5,6 +5,14 @@
  */
 export { buildServer, type BuildServerOptions } from './app.js';
 export {
+  ApiKeyAuthenticator,
+  parseAuthHeader,
+  type ApiKeyConfig,
+  type ApiKeyPrincipal,
+  type AuthConfig,
+  type ServerRole,
+} from './auth.js';
+export {
   createPlatform,
   developmentLogger,
   type Platform,

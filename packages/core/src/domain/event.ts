@@ -26,6 +26,7 @@ export const EVENT_TYPES = [
   'policy.evaluated',
   'budget.charged',
   'budget.exceeded',
+  'admin.action',
   'vendor.registered',
   'vendor.signal',
   'note',
@@ -182,6 +183,22 @@ export const EventInputSchema = z.discriminatedUnion('type', [
           attempted: MoneySchema,
           limit: MoneySchema,
           actionId: IdSchema.optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...envelope,
+      type: z.literal('admin.action'),
+      payload: z
+        .object({
+          action: z.string().min(1).max(256),
+          targetType: z.string().min(1).max(128),
+          targetId: IdSchema.optional(),
+          outcome: z.enum(['success', 'failure']).default('success'),
+          reason: z.string().max(2000).default(''),
+          details: JsonValueSchema.optional(),
         })
         .strict(),
     })

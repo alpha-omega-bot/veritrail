@@ -109,4 +109,29 @@ describe('EventInputSchema', () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it('parses strict admin.action events', () => {
+    const result = EventInputSchema.safeParse({
+      type: 'admin.action',
+      actorId: 'operator_1',
+      payload: {
+        action: 'policy.created',
+        targetType: 'policy',
+        targetId: 'pol_1',
+        details: { effect: 'allow' },
+      },
+    });
+    expect(result.success).toBe(true);
+
+    const unknownField = EventInputSchema.safeParse({
+      type: 'admin.action',
+      actorId: 'operator_1',
+      payload: {
+        action: 'policy.created',
+        targetType: 'policy',
+        unexpected: true,
+      },
+    });
+    expect(unknownField.success).toBe(false);
+  });
 });

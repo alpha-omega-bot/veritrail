@@ -60,6 +60,11 @@ export function summarize(event: EventInput): string {
       const { budgetId, attempted, limit } = event.payload;
       return `budget ${budgetId} exceeded: attempted ${attempted.amountMinor} ${attempted.currency} > limit ${limit.amountMinor} ${limit.currency}`;
     }
+    case 'admin.action': {
+      const { action, targetType, targetId, outcome } = event.payload;
+      const target = targetId !== undefined ? `${targetType} ${targetId}` : targetType;
+      return `admin ${action} on ${target} (${outcome})`;
+    }
     case 'vendor.registered': {
       const { vendor } = event.payload;
       return `registered vendor ${vendor.id} (${vendor.name})`;
