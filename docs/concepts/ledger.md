@@ -265,8 +265,9 @@ When a signer is configured, `append` signs every record's `hash`, stores the
 `HmacSigner.verify` uses a constant-time comparison (`timingSafeEqual`) to avoid
 leaking via timing, and requires a secret of at least 16 characters.
 
-The default deployment remains unsigned; external anchoring is still on the
-roadmap.
+The default deployment remains unsigned; external anchoring is available through
+the core `AnchorStore` port and should be backed by an independent system in
+production.
 
 ## Honest limitation: a fully-rewritten unsigned chain
 
@@ -280,17 +281,60 @@ Two mitigations:
 
 1. **Sign the chain.** A forger without the key cannot produce valid signatures,
    so a rewritten chain fails the `signature_invalid` check.
-2. **Anchor externally.** Compare the report's `head` against an externally
-   recorded value (a value committed elsewhere — e.g. a notary, a second store,
-   or a published checkpoint). If the recomputed `head` differs from the anchored
-   one, the chain was rewritten even though it is internally consistent. The
-   `AuditModule.exportNdjson` projection exists in part to support this offline
-   anchoring workflow. External anchoring is on the roadmap.
+2. **Anchor externally.** Publish periodic `AnchorRecord` checkpoints through an
+   `AnchorStore` backed by an independent system — e.g. a notary, immutable object
+   store, or transparency log. `verifyLedgerAgainstLatestAnchor()` verifies the
+   chain and compares the latest anchor to the record at the anchored sequence.
+   If that record's hash differs, or the record disappeared, the anchored prefix
+   was rewritten even if the current chain is internally consistent.
 
 This is called out directly in the `verifyChain` contract:
 
 > A fully-rewritten unsigned chain is internally consistent by construction; to
 > detect that, compare the returned `head` against an externally anchored value.
+
+## External anchoring API
+
+Core exposes a small checkpoint abstraction in
+`packages/core/src/anchoring/index.ts`:
+
+```ts
+export interface AnchorRecord {
+  readonly anchorId: string;
+  readonly anchoredAt: number;
+  readonly seq: number;
+  readonly recordId: string;
+  readonly headHash: string;
+  readonly headTimestamp: number;
+  readonly signerKeyId?: string;
+  readonly signature?: string;
+}
+
+export interface AnchorStore {
+  publish(anchor: unknown): Promise<Result<AnchorRecord, VeritrailError>>;
+  latest(): Promise<AnchorRecord | null>;
+  list(): Promise<AnchorRecord[]>;
+}
+```
+
+`publishLedgerHeadAnchor({ ledger, store, clock, ids })` reads the current ledger
+head and writes an anchor. It returns `NOT_FOUND` for an empty ledger. The helper
+copies `signerKeyId` and `signature` from the head when present so the checkpoint
+identifies the signed record it committed.
+
+`verifyLedgerAgainstLatestAnchor({ ledger, store })` returns `NOT_FOUND` when no
+anchor exists. Otherwise it returns an `AnchorVerificationReport` with the normal
+`IntegrityReport` plus anchor-specific issues:
+
+- `chain_invalid` — normal ledger verification failed.
+- `anchored_record_missing` — the latest anchor points past the current ledger.
+- `anchor_hash_mismatch` — the anchored sequence exists but has a different hash.
+- `anchor_record_id_mismatch` — the hash matched but the ledger record id does
+  not match the checkpoint.
+
+Verification compares the latest anchor to the record at the anchored `seq`, not
+only to the current head. This means records appended after a checkpoint are
+valid; they are simply not covered until the next checkpoint is published.
 
 ## Worked example
 

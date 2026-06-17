@@ -43,9 +43,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       error mapping, and an operator runbook for managed key custody/rotation.
 - [ ] **Provider signer packages.** Add AWS KMS / GCP KMS / Azure Key Vault /
       HSM SDK wrappers around `RemoteSignerClient`.
-- [ ] **External anchoring.** Periodically publish the chain head to an external
-      store/transparency log so a wholesale rewrite of an _unsigned_ chain is
-      detectable. Document the operator runbook.
+- [x] **External anchoring.** Core `AnchorStore` port, `InMemoryAnchorStore`,
+      ledger-head publish/verify helpers, rewrite-detection tests, and operator
+      runbook are in place. Production deployments still need concrete provider
+      adapters to publish checkpoints to an independent object store, notary, or
+      transparency log.
 - [ ] **Server authN/authZ.** API keys/OIDC, per-actor scoping, operator RBAC;
       record administrative actions on the ledger. (threat: S1)
 - [ ] **PII handling.** Field-level redaction/encryption hooks at the append
@@ -161,6 +163,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Added core external anchoring. `AnchorRecord` checkpoints,
+  `AnchorStore`, `InMemoryAnchorStore`, `publishLedgerHeadAnchor()`, and
+  `verifyLedgerAgainstLatestAnchor()` now let deployments publish independent
+  ledger-head checkpoints and detect wholesale rewrites of an unsigned chain.
+  Added adversarial rewrite tests and `docs/runbooks/external-anchoring.md`.
+  **Next:** provider-specific KMS signer wrappers or concrete anchor-store
+  adapters for object-store/notary deployments.
 - **2026-06-17** — Added the remote key-custody signing interface. `Signer.sign`
   now supports async implementations; `Ledger.append()` maps remote signing
   failures to `STORAGE` before persistence; `RemoteEd25519Signer` signs via a

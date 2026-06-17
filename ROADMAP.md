@@ -38,9 +38,9 @@ Make the system durable, secure, and operable for a first real deployment.
   remote key-custody client while verifying locally; operator runbook documented.
 - ⬜ **Provider signer packages**: AWS KMS / GCP KMS / Azure Key Vault / HSM SDK
   wrappers around the remote signer interface.
-- ⬜ **External anchoring**: periodically publish the chain head (e.g. to a
-  transparency log / object store / notary) to detect wholesale rewrites of an
-  unsigned chain.
+- ✅ **External anchoring**: core `AnchorStore` port, in-memory adapter, helpers
+  to publish and verify ledger-head checkpoints, and operator runbook for
+  transparency-log/object-store/notary deployments.
 - ⬜ **AuthN/AuthZ** on the server: API keys/OIDC, per-actor scoping, and RBAC for
   operators; signed audit of administrative actions.
 - ⬜ **PII handling**: field-level redaction/encryption hooks at the append

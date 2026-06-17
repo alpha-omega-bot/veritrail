@@ -6,13 +6,14 @@ project over.
 
 ## What's here
 
-| Area        | Exports                                                                                              |
-| ----------- | ---------------------------------------------------------------------------------------------------- |
-| **Ledger**  | `Ledger`, `verifyChain`, `IntegrityReport`, `LedgerRecord`, hashing                                  |
-| **Domain**  | Zod schemas + types: `Action`, `Decision`, `Evidence`, `Policy`, `Budget`, `Vendor`, `EventInput`, … |
-| **Storage** | `EventStore` port, `InMemoryEventStore`, `FileEventStore`                                            |
-| **Ports**   | `Clock`, `IdGenerator`, `Logger`, `Signer` (`HmacSigner`, `Ed25519Signer`)                           |
-| **Utils**   | `Result`, `VeritrailError`, `canonicalize`, `sha256Hex`                                              |
+| Area          | Exports                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| **Ledger**    | `Ledger`, `verifyChain`, `IntegrityReport`, `LedgerRecord`, hashing                                  |
+| **Domain**    | Zod schemas + types: `Action`, `Decision`, `Evidence`, `Policy`, `Budget`, `Vendor`, `EventInput`, … |
+| **Storage**   | `EventStore` port, `InMemoryEventStore`, `FileEventStore`                                            |
+| **Ports**     | `Clock`, `IdGenerator`, `Logger`, `Signer` (`HmacSigner`, `Ed25519Signer`)                           |
+| **Anchoring** | `AnchorStore`, `InMemoryAnchorStore`, helpers to publish and verify external ledger-head checkpoints |
+| **Utils**     | `Result`, `VeritrailError`, `canonicalize`, `sha256Hex`                                              |
 
 `FileEventStore` persists ledger records as append-only JSON Lines. Each append
 is flushed with file `fsync` before it is acknowledged, and reopening a file with
@@ -54,8 +55,8 @@ console.log(report.ok, report.head); // true, <chain head hash>
   asymmetric signing and verification across key rotation via `signerKeyId`.
   `RemoteEd25519Signer` delegates signing to KMS/HSM clients while keeping
   verification local.
-- **Anchoring (roadmap)**: a fully-rewritten _unsigned_ chain is internally
-  consistent; compare `report.head` against an externally anchored value to
-  detect wholesale rewrites. External anchoring is on the roadmap.
+- **Anchoring**: a fully-rewritten _unsigned_ chain is internally consistent;
+  publish periodic `AnchorRecord` checkpoints through an `AnchorStore` and verify
+  them with `verifyLedgerAgainstLatestAnchor()` to detect wholesale rewrites.
 
 See [`docs/concepts/ledger.md`](../../docs/concepts/ledger.md) for the full model.
