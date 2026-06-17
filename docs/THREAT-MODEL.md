@@ -43,8 +43,8 @@ We use STRIDE as a checklist.
   external anchoring of the head. ⚠ anchoring is Milestone 1 — until then, monitor
   the head out-of-band. **Residual risk acknowledged.**
 - **T4 — Forge records when signing is on.** _Mitigation:_ signature verification;
-  Ed25519 asymmetric signing removes shared-secret verifier exposure. KMS/HSM
-  custody for production keys remains Milestone 1 hardening.
+  Ed25519 asymmetric signing removes shared-secret verifier exposure.
+  `RemoteEd25519Signer` supports KMS/HSM custody while keeping verification local.
 
 ### Spoofing
 

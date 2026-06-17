@@ -38,8 +38,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
 - [x] **Asymmetric signing.** Added a local Ed25519 `Signer` alongside HMAC.
       Verification is `signerKeyId`-aware and supports trusted previous public
       keys for key rotation.
-- [ ] **KMS/HSM signing.** Add remote-backed `Signer` adapters and operator
-      runbooks for managed key custody and rotation.
+- [x] **KMS/HSM signing interface.** Added `RemoteEd25519Signer`, a
+      `RemoteSignerClient` port, local public-key verification, signing-failure
+      error mapping, and an operator runbook for managed key custody/rotation.
+- [ ] **Provider signer packages.** Add AWS KMS / GCP KMS / Azure Key Vault /
+      HSM SDK wrappers around `RemoteSignerClient`.
 - [ ] **External anchoring.** Periodically publish the chain head to an external
       store/transparency log so a wholesale rewrite of an _unsigned_ chain is
       detectable. Document the operator runbook.
@@ -158,6 +161,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-17** — Added the remote key-custody signing interface. `Signer.sign`
+  now supports async implementations; `Ledger.append()` maps remote signing
+  failures to `STORAGE` before persistence; `RemoteEd25519Signer` signs via a
+  `RemoteSignerClient` and verifies locally with configured public keys. Added
+  tests for remote signing and remote signing failure, plus
+  `docs/runbooks/kms-hsm-signing.md`. **Next:** provider-specific KMS wrappers or
+  external anchoring.
 - **2026-06-17** — Added local Ed25519 ledger signing in `@veritrail/core`.
   `verifyChain` now passes each record's `signerKeyId` into the signer, HMAC
   rejects wrong key ids, and Ed25519 verification can trust previous public keys

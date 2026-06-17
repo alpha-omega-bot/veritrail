@@ -8,12 +8,14 @@ import {
   HmacSigner,
   InMemoryEventStore,
   Ledger,
+  RemoteEd25519Signer,
   SequentialIdGenerator,
   verifyChain,
+  type RemoteSignerClient,
   type LedgerRecord,
 } from '@veritrail/core';
 
-function freshLedger(signer?: HmacSigner | Ed25519Signer): Ledger {
+function freshLedger(signer?: HmacSigner | Ed25519Signer | RemoteEd25519Signer): Ledger {
   return new Ledger({
     store: new InMemoryEventStore(),
     clock: new FixedClock(1_700_000_000_000),
@@ -159,6 +161,55 @@ describe('Ledger signing', () => {
     const report = verifyChain([previousRecord], { signer: current });
 
     expect(report.ok).toBe(true);
+  });
+
+  it('signs through a remote Ed25519 client and verifies locally', async () => {
+    const remoteKey = Ed25519Signer.generate({ keyId: 'kms-ed-current' });
+    const publicKey = remoteKey.publicKey()!;
+    let calls = 0;
+    const client: RemoteSignerClient = {
+      async sign(data) {
+        calls += 1;
+        return Buffer.from(remoteKey.sign(data.toString('utf8')), 'hex');
+      },
+    };
+    const signer = new RemoteEd25519Signer({
+      keyId: 'kms-ed-current',
+      client,
+      publicKey,
+    });
+    const ledger = freshLedger(signer);
+
+    await appendNotes(ledger, ['remote']);
+
+    expect(calls).toBe(1);
+    const head = await ledger.head();
+    expect(head!.signerKeyId).toBe('kms-ed-current');
+    expect((await ledger.verify()).ok).toBe(true);
+  });
+
+  it('returns a STORAGE error when remote signing fails before persistence', async () => {
+    const remoteKey = Ed25519Signer.generate({ keyId: 'kms-ed-current' });
+    const signer = new RemoteEd25519Signer({
+      keyId: 'kms-ed-current',
+      publicKey: remoteKey.publicKey()!,
+      client: {
+        async sign() {
+          throw new Error('kms unavailable');
+        },
+      },
+    });
+    const ledger = freshLedger(signer);
+
+    const result = await ledger.append({
+      type: 'note',
+      actorId: 'agent_1',
+      payload: { text: 'x' },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('STORAGE');
+    expect(await ledger.count()).toBe(0);
   });
 });
 
