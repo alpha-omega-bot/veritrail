@@ -1,0 +1,158 @@
+# Veritrail Backlog (living work queue)
+
+> This is the prioritized task list the full-time engineer works from. Keep it
+> truthful and current. When you finish a session, update the **Session log** at
+> the bottom (date + what changed + what's next) so the next session resumes
+> instantly. Check items off in the PR that completes them.
+
+Priority order is top-to-bottom within each section; sections are in milestone
+order. "Findings" come from the adversarial review of v0.1 (verified bugs and
+lower-severity issues that were filed rather than fixed in the bootstrap).
+
+---
+
+## P0 — Repository safety (do first)
+
+- [ ] **Enable server-side branch protection on `main`.** The current PAT lacks
+      "Administration: write", so it must be done in the GitHub UI OR by granting
+      the scope and running `scripts/protect-branch.sh alpha-omega-bot/veritrail main`.
+      Required checks: `verify (node 20)`, `verify (node 22)`, `ledger integrity gate`;
+      linear history; block force-push & deletion; required conversation resolution.
+      (Local pre-push hook is already active but bypassable.)
+- [x] Local pre-push hook blocking broken pushes (`.githooks/pre-push`).
+- [x] CI green on `main` (verify on Node 20/22 + ledger-integrity gate + CodeQL).
+
+---
+
+## P1 — Milestone 1: productionize the core
+
+- [ ] **Durable file append.** `FileEventStore.append` does not fsync and is not
+      atomic; an acknowledged write can be lost/torn on crash. Use atomic
+      append + fsync (or temp-write+rename for snapshots). (review: core/medium)
+- [ ] **Relational `EventStore`.** Implement SQLite (single-node) and Postgres
+      (HA) adapters behind the existing `EventStore` port; migrations;
+      concurrent-writer safety. Nothing above the port should change.
+- [ ] **Asymmetric signing.** Add an Ed25519 `Signer` (KMS/HSM-backed) with key
+      rotation and `signerKeyId` chains, alongside the existing HMAC signer.
+- [ ] **External anchoring.** Periodically publish the chain head to an external
+      store/transparency log so a wholesale rewrite of an _unsigned_ chain is
+      detectable. Document the operator runbook.
+- [ ] **Server authN/authZ.** API keys/OIDC, per-actor scoping, operator RBAC;
+      record administrative actions on the ledger. (threat: S1)
+- [ ] **PII handling.** Field-level redaction/encryption hooks at the append
+      boundary; configurable retention with cryptographic erasure. (threat: I1)
+- [ ] **Backpressure & limits.** Request rate limiting, payload caps, and append
+      batching/backpressure on the server. (threat: D1)
+- [ ] **`DefaultIdGenerator` hardening.** Guard against collisions when the clock
+      moves backward and on >65536 ids/ms. (review: core/low)
+
+---
+
+## P2 — Milestone 2: bring scaffold modules to GA
+
+Each module: clear its README "Phase 1 TODO", reach test depth comparable to the
+GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilities.md`.
+
+### rollback
+
+- [ ] Saga/partial-failure semantics; idempotency keys; real executor adapters;
+      snapshot stores for the `restore` strategy.
+- [ ] `execute()` loses a real compensation if the `action.rolled_back` append
+      fails after a successful side effect — make it durable/retryable. (review: low)
+- [ ] `planForCorrelation` silently drops executed actions whose proposal is in
+      another correlation / whose executed receipt lacks the correlationId —
+      decide intended semantics and make it explicit. (review: 2× low)
+
+### forensics
+
+- [ ] Anomaly detection, blast-radius analysis, root-cause ranking, snapshot
+      diffs, shareable incident bundles.
+
+### evidence
+
+- [ ] External content capture + hashing; signed evidence; full
+      decision↔evidence cross-linking; large-graph pagination.
+- [ ] `trace()` depth cap + id-only visited set can drop in-range nodes/edges →
+      incomplete provenance graph; and duplicate `derived_from` edges for repeated
+      upstream ids. Fix traversal + dedupe edges. (review: medium + low)
+
+### decision-memory
+
+- [ ] Semantic recall via embeddings; outcome linkage (did the decision work?);
+      recency/decay weighting.
+- [ ] `recall` score denominator uses distinct-token set size, diverging from the
+      documented `sharedTokens / queryTokens` for repeated tokens; and negative
+      `limit` in `list()` returns ALL — clamp/validate. (review: 2× low)
+
+### vendor-risk
+
+- [ ] Real monitor feeds (status pages, CVE, SOC2/cert expiry); alert thresholds;
+      SLA tracking; dependency mapping to affected agents.
+
+---
+
+## P2.5 — Cross-cutting correctness (smaller, do alongside module work)
+
+- [ ] **SDK client** throws raw `SyntaxError` on non-JSON HTTP bodies →
+      wrap to `VeritrailError` (uniform-error contract). (review: medium) — partially
+      addressed in bootstrap; verify and add a test.
+- [ ] **Audit `summary()`** can return an internally inconsistent snapshot under
+      concurrent appends (multiple independent reads). Take one consistent
+      snapshot. (review: low)
+- [ ] **Server `limit` handling**: confirm non-positive `limit` semantics are
+      consistent end-to-end (query layer treats `limit:0` as zero; ensure routes
+      agree and are tested). (review: medium)
+
+---
+
+## P3 — Milestone 3: console & real-time
+
+- [ ] Console to GA (live data, filtering, saved queries, integrity badge backed
+      by live verify).
+- [ ] SSE/websocket subscription over the ledger tail.
+- [ ] Alerting (budget breaches, denial spikes, vendor criticals) → email/Slack/webhook.
+- [ ] Scheduled audit/spend/vendor reports & exports.
+
+---
+
+## P4 — Milestone 4: platform & ecosystem
+
+- [ ] Multi-tenant control plane (orgs, projects, tenancy isolation, billing).
+- [ ] Framework integrations + an **MCP server** so agents self-report to Veritrail.
+- [ ] Policy-as-code (richer language, simulation/what-if, versioned on the ledger).
+- [ ] Compliance packs (SOC 2 / ISO 27001 / EU AI Act readiness).
+
+---
+
+## Notes on already-fixed items (do not redo)
+
+The bootstrap adversarial review found and **fixed** these (with regression
+tests) — they are done:
+
+- Signer crash (RangeError) on malformed same-length signature → hardened.
+- `FileEventStore.open` aborting the whole ledger on a torn trailing line →
+  recovers the committed prefix.
+- `applyQuery` off-by-one with `limit:0` → returns zero.
+- `verifyChain` now flags records lacking a signature when a signer is configured.
+- Money bounded to safe integers.
+- Permissions glob ReDoS (catastrophic backtracking) + newline-bypass → fixed.
+- Spend-guard cross-currency budget aborting a charge → now skipped; label-budget
+  accrual via the Governor → labels forwarded to `charge`; Governor now handles a
+  failed `charge` result instead of swallowing it.
+- Forensics `budget.charged` summary "[object Object]" → readable scope.
+- Rollback `compensate` with no `inverse` (and `restore` with no snapshot) → now
+  treated as unreversible.
+
+---
+
+## Session log
+
+- **2026-06-17** — Bootstrap by Claude: built v0.1 (core + 8 modules + sdk +
+  server + cli + console + docs + CI), ran adversarial review, fixed 6
+  high/critical + several lower findings (199 tests green). Created private repo
+  `alpha-omega-bot/veritrail`, pushed `main`, added local pre-push guard and
+  `scripts/protect-branch.sh`. CI green on Node 20/22 + ledger-integrity gate.
+  **Server-side branch protection NOT yet enabled** (token lacks Administration:
+  write) — that is the top P0 item. **Next:** enable protection, then start
+  Milestone 1 (durable append → relational store) and Milestone 2 (rollback to GA
+  first, since its findings are smallest).
