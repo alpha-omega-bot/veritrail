@@ -32,15 +32,15 @@ scripts/protect-branch.sh <owner/repo> main
 
 Guards applied:
 
-| Guard                                  | Effect                                                                                               |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Required status checks (strict)        | `verify (node 20)`, `verify (node 22)`, `ledger integrity gate` must pass; branch must be up to date |
-| Required PR review (≥1, dismiss stale) | No direct merges without an approved, current review                                                 |
-| Enforce for admins                     | Even admins cannot bypass the rules                                                                  |
-| Block force-push                       | History on `main` cannot be rewritten                                                                |
-| Block deletions                        | `main` cannot be deleted                                                                             |
-| Required linear history                | No merge commits — squash/rebase only                                                                |
-| Required conversation resolution       | All review threads resolved before merge                                                             |
+| Guard                                   | Effect                                                                                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Required status checks (strict)         | `verify (node 20)`, `verify (node 22)`, `ledger integrity gate` must pass; branch must be up to date  |
+| Required PR review rule (dismiss stale) | PR review protection is enabled; approving-review count is currently `0` for the solo-maintainer flow |
+| Enforce for admins                      | Even admins cannot bypass the rules                                                                   |
+| Block force-push                        | History on `main` cannot be rewritten                                                                 |
+| Block deletions                         | `main` cannot be deleted                                                                              |
+| Required linear history                 | No merge commits — squash/rebase only                                                                 |
+| Required conversation resolution        | All review threads resolved before merge                                                              |
 
 ## 3. CI: the checks being enforced
 
@@ -52,8 +52,10 @@ names are referenced as required status checks above:
 - `ledger integrity gate` — runs the core's tamper-evidence suite in isolation,
   so a regression in the ledger's integrity guarantees blocks every merge.
 
-[`.github/workflows/codeql.yml`](../.github/workflows/codeql.yml) adds security
-scanning.
+`.github/workflows/codeql.yml` adds security scanning. Because this private repo
+does not currently have GitHub Advanced Security/code scanning enabled, the
+workflow publishes SARIF results as a CI artifact instead of uploading them to
+GitHub code scanning.
 
 > **Important:** the status-check _contexts_ in `protect-branch.sh` must match the
 > CI job _names_ exactly. If you rename a CI job, update the script in the same PR,
