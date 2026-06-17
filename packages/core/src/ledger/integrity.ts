@@ -89,7 +89,7 @@ export function verifyChain(
           kind: 'signature_invalid',
           detail: 'record has no signature but a signer is configured',
         });
-      } else if (!options.signer.verify(record.hash, record.signature)) {
+      } else if (!options.signer.verify(record.hash, record.signature, record.signerKeyId)) {
         issues.push({
           seq: record.seq,
           kind: 'signature_invalid',

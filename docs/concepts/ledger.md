@@ -199,9 +199,9 @@ For each record, in sequence, `verifyChain`:
    `chain_break`.
 3. **Hash check.** Recompute `computeRecordHash(record)`; if it differs from
    `record.hash`, push `hash_mismatch`.
-4. **Signature check.** Only when a signer is supplied _and_ the record carries a
-   `signature`: if `signer.verify(record.hash, record.signature)` is false, push
-   `signature_invalid`.
+4. **Signature check.** Only when a signer is supplied: missing signatures are
+   invalid, and if `signer.verify(record.hash, record.signature, record.signerKeyId)`
+   is false, push `signature_invalid`.
 
 Then it advances the running state: `prevHash = record.hash` (the record's
 **stored** hash, not the recomputed one) and `expectedSeq += 1`.
@@ -242,7 +242,7 @@ export interface Signer {
   readonly algorithm: string;
   readonly keyId: string; // recorded alongside the signature
   sign(data: string): string; // detached signature (hex) over `data`
-  verify(data: string, signature: string): boolean;
+  verify(data: string, signature: string, keyId?: string): boolean;
 }
 ```
 
@@ -253,14 +253,19 @@ trusted holders of the key:
 const ledger = createInMemoryLedger({ signer: new HmacSigner(secret) });
 ```
 
+`Ed25519Signer` is asymmetric: it signs with a private key and verifies with
+public keys. The current signer `keyId` is recorded on each record as
+`signerKeyId`; verifiers can keep previous public keys in `trustedPublicKeys` so
+records signed before key rotation continue to verify.
+
 When a signer is configured, `append` signs every record's `hash`, stores the
 `signature` and `signerKeyId`, and `Ledger.verify()` passes the signer into
-`verifyChain`, which verifies each present signature. `HmacSigner.verify` uses a
-constant-time comparison (`timingSafeEqual`) to avoid leaking via timing, and
-requires a secret of at least 16 characters.
+`verifyChain`, which verifies each present signature against its `signerKeyId`.
+`HmacSigner.verify` uses a constant-time comparison (`timingSafeEqual`) to avoid
+leaking via timing, and requires a secret of at least 16 characters.
 
-> An asymmetric (Ed25519) signer with external anchoring is on the roadmap; the
-> default deployment is unsigned.
+The default deployment remains unsigned; external anchoring is still on the
+roadmap.
 
 ## Honest limitation: a fully-rewritten unsigned chain
 
