@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# Veritrail pre-push guard.
+#
+# Blocks a push when the working tree would fail CI, so broken code never reaches
+# the remote. Mirrors the CI gate: format → lint → typecheck → test → build.
+#
+# Bypass (use sparingly, e.g. docs-only emergencies): `git push --no-verify`.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# (or run: pnpm run setup:hooks)
+
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+
+echo -e "${YELLOW}▶ Veritrail pre-push: running CI-equivalent checks…${NC}"
+
+# Resolve a pnpm invocation (prefer corepack so the pinned version is used).
+if command -v pnpm >/dev/null 2>&1; then
+  PNPM="pnpm"
+elif command -v corepack >/dev/null 2>&1; then
+  PNPM="corepack pnpm"
+else
+  echo -e "${RED}✗ pnpm/corepack not found; cannot verify before push.${NC}"
+  exit 1
+fi
+
+run() {
+  local label="$1"; shift
+  echo -e "${YELLOW}  • ${label}…${NC}"
+  if ! "$@"; then
+    echo -e "${RED}✗ ${label} failed — push aborted.${NC}"
+    echo -e "${RED}  Fix the failure, or bypass with: git push --no-verify${NC}"
+    exit 1
+  fi
+}
+
+run "format:check" $PNPM run format:check
+run "lint"         $PNPM run lint
+run "typecheck"    $PNPM run typecheck
+run "test"         $PNPM run test
+run "build"        $PNPM -r --filter "./packages/**" run build
+
+echo -e "${GREEN}✓ All checks passed — push allowed.${NC}"
+exit 0

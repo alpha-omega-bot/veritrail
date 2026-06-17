@@ -21,6 +21,7 @@
     "format:check": "prettier --check .",
     "verify": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
     "ci": "pnpm run verify && pnpm run build",
+    "setup:hooks": "git config core.hooksPath .githooks && echo \"Veritrail git hooks enabled (.githooks).\"",
     "clean": "pnpm -r exec rm -rf dist .turbo node_modules/.cache && rm -rf node_modules"
   },
   "devDependencies": {
