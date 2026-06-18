@@ -12,9 +12,9 @@ so the audit trail is always exactly the system of record.
 - **timeline** — all records sharing a `correlationId` (one run/incident/trace),
   in sequence order.
 - **verify** — run the ledger's integrity check over the whole chain.
-- **summary** — a one-pass `AuditSummary`: total records, chain head, integrity
-  status, a histogram of event types, distinct actor count, and first/last
-  timestamps.
+- **summary** — a one-snapshot `AuditSummary`: total records, chain head,
+  integrity status, a histogram of event types, distinct actor count, and
+  first/last timestamps.
 - **exportNdjson** — the whole ledger as newline-delimited JSON (one record per
   line, sequence order), suitable for offline analysis or external anchoring.
 
@@ -85,5 +85,6 @@ const backup = await audit.exportNdjson(); // one JSON record per line
 
 - `exportNdjson` produces no trailing newline; each line round-trips via
   `JSON.parse` back into a `LedgerRecord`.
-- `summary().head` and `summary().integrityOk` come from the ledger's own
-  `verify()` pass, so they reflect tamper-evidence, not just a record count.
+- `summary()` verifies the same ledger snapshot it aggregates, so `head`,
+  `totalRecords`, counts, and `integrityOk` describe one consistent view even
+  while new records are appended.

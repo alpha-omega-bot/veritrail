@@ -157,7 +157,16 @@ export class Ledger implements LedgerReader, LedgerWriter {
 
   async verify(): Promise<IntegrityReport> {
     const all = await this.#store.readAll();
-    return verifyChain(all, this.#signer ? { signer: this.#signer } : {});
+    return this.verifyRecords(all);
+  }
+
+  /**
+   * Verify an already-read record snapshot with this ledger's verifier
+   * configuration. Use this when a projection must aggregate and verify the
+   * same immutable read snapshot rather than performing a second store read.
+   */
+  verifyRecords(records: readonly LedgerRecord[]): IntegrityReport {
+    return verifyChain(records, this.#signer ? { signer: this.#signer } : {});
   }
 
   async replay<S>(reducer: (state: S, record: LedgerRecord) => S, initial: S): Promise<S> {

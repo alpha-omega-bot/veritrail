@@ -8,7 +8,7 @@ project over.
 
 | Area          | Exports                                                                                              |
 | ------------- | ---------------------------------------------------------------------------------------------------- |
-| **Ledger**    | `Ledger`, `verifyChain`, `IntegrityReport`, `LedgerRecord`, hashing                                  |
+| **Ledger**    | `Ledger`, `verifyChain`, `IntegrityReport`, `LedgerRecord`, hashing, snapshot verification           |
 | **Domain**    | Zod schemas + types: `Action`, `Decision`, `Evidence`, `Policy`, `Budget`, `Vendor`, `EventInput`, … |
 | **Storage**   | `EventStore` port, `InMemoryEventStore`, `FileEventStore`                                            |
 | **Ports**     | `Clock`, `IdGenerator`, `Logger`, `Signer` (`HmacSigner`, `Ed25519Signer`)                           |
@@ -51,6 +51,9 @@ console.log(report.ok, report.head); // true, <chain head hash>
 - **Tamper-evident**: `verify()` recomputes every hash and checks every link.
   A single altered record surfaces as one `hash_mismatch`; re-hashing it surfaces
   as a downstream `chain_break`.
+- **Snapshot-verifiable**: `Ledger.verifyRecords(records)` verifies an
+  already-read record snapshot with the ledger's signer configuration, so
+  projections can aggregate and verify the same view.
 - **Forgery-resistant (optional)**: provide a `Signer` to sign every record.
   `HmacSigner` supports symmetric deployments; `Ed25519Signer` supports
   asymmetric signing and verification across key rotation via `signerKeyId`.
