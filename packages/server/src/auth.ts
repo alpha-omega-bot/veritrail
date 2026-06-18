@@ -28,6 +28,12 @@ export interface ApiKeyPrincipal {
    * Omitted scopes preserve the role-only behavior used by existing deployments.
    */
   readonly scopes?: readonly ServerScope[];
+  /**
+   * Optional exact event-label constraints for tenant/project scoping.
+   * Scoped raw ledger reads are constrained to these labels, and scoped writes
+   * must include them.
+   */
+  readonly labelScope?: Readonly<Record<string, string>>;
 }
 
 export interface ApiKeyConfig {
@@ -37,6 +43,8 @@ export interface ApiKeyConfig {
   readonly roles: readonly ServerRole[];
   /** Optional route scopes. When supplied, scoped routes require a matching value. */
   readonly scopes?: readonly ServerScope[];
+  /** Optional exact event-label constraints for tenant/project scoping. */
+  readonly labelScope?: Readonly<Record<string, string>>;
 }
 
 export interface RouteAccess {
@@ -66,6 +74,7 @@ const ApiKeyConfigSchema = z
     secret: z.string().min(16),
     roles: z.array(ServerRoleSchema).min(1),
     scopes: z.array(ServerScopeSchema).optional(),
+    labelScope: z.record(z.string().min(1), z.string()).optional(),
   })
   .strict();
 
@@ -91,6 +100,7 @@ export class ApiKeyAuthenticator {
         actorId: key.actorId,
         roles: key.roles,
         ...(key.scopes !== undefined ? { scopes: key.scopes } : {}),
+        ...(key.labelScope !== undefined ? { labelScope: key.labelScope } : {}),
       },
       secretHash: hashSecret(key.secret),
     }));
@@ -136,13 +146,33 @@ function parseApiKeyEntry(entry: string): ApiKeyConfig {
     );
   }
   const roles = z.array(ServerRoleSchema).min(1).parse(tokensFrom(rolesRaw));
-  const scopes = parseScopes(scopeParts.length > 0 ? scopeParts.join(':') : undefined);
+  const trailingFields = parseTrailingFields(scopeParts);
+  const scopes = parseScopes(trailingFields.scopes);
+  const labelScope = parseLabelScope(trailingFields.labelScope);
   return {
     id,
     actorId,
     secret,
     roles,
     ...(scopes !== undefined ? { scopes } : {}),
+    ...(labelScope !== undefined ? { labelScope } : {}),
+  };
+}
+
+interface ParsedTrailingFields {
+  readonly scopes?: string;
+  readonly labelScope?: string;
+}
+
+function parseTrailingFields(parts: readonly string[]): ParsedTrailingFields {
+  if (parts.length === 0) return {};
+  const raw = parts.join(':');
+  const [scopesRaw, labelScopeRaw] = raw.split(';labels=');
+  return {
+    ...(scopesRaw !== undefined && scopesRaw.length > 0 ? { scopes: scopesRaw } : {}),
+    ...(labelScopeRaw !== undefined && labelScopeRaw.length > 0
+      ? { labelScope: labelScopeRaw }
+      : {}),
   };
 }
 
@@ -150,6 +180,18 @@ function parseScopes(raw: string | undefined): ServerScope[] | undefined {
   if (!raw) return undefined;
   const scopes = z.array(ServerScopeSchema).min(1).parse(tokensFrom(raw));
   return scopes.length > 0 ? scopes : undefined;
+}
+
+function parseLabelScope(raw: string | undefined): Readonly<Record<string, string>> | undefined {
+  if (!raw) return undefined;
+  const entries = tokensFrom(raw).map((token) => {
+    const separator = token.indexOf('=');
+    if (separator <= 0 || separator === token.length - 1) {
+      throw new Error('label scopes must be key=value pairs');
+    }
+    return [token.slice(0, separator), token.slice(separator + 1)] as const;
+  });
+  return z.record(z.string().min(1), z.string()).parse(Object.fromEntries(entries));
 }
 
 function tokensFrom(raw: string): string[] {

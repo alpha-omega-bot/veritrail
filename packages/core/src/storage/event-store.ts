@@ -15,6 +15,8 @@ export interface EventQuery {
   actorId?: string;
   /** Restrict to a single correlation (run/incident/trace) id. */
   correlationId?: string;
+  /** Restrict to records whose event labels contain these exact key/value pairs. */
+  labels?: Readonly<Record<string, string>>;
   /** Cap the number of returned records (applied after filtering, in seq order). */
   limit?: number;
 }

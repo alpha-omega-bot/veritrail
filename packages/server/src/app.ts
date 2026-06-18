@@ -4,6 +4,7 @@ import {
   ActorSchema,
   BudgetSchema,
   CAPABILITIES,
+  EventInputSchema,
   HmacSigner,
   MoneySchema,
   PolicySchema,
@@ -12,12 +13,15 @@ import {
   isEventType,
   validationError,
   type Actor,
+  type EventInput,
   type EventQuery,
+  type LedgerRecord,
   type Ledger,
+  type JsonValue,
 } from '@veritrail/core';
 import type { PermissionsConfig } from '@veritrail/permissions';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
-import { z } from 'zod';
+import { z, type ZodError } from 'zod';
 
 import {
   ApiKeyAuthenticator,
@@ -97,6 +101,9 @@ function eventQueryFrom(raw: Record<string, unknown>): QueryParseResult<EventQue
   if (actorId !== undefined) query.actorId = actorId;
   const correlationId = asString(raw['correlationId']);
   if (correlationId !== undefined) query.correlationId = correlationId;
+  const labels = labelsFrom(raw);
+  if (!labels.ok) return labels;
+  if (labels.value !== undefined) query.labels = labels.value;
   const type = asString(raw['type']);
   if (type !== undefined && isEventType(type)) query.types = [type];
   const limit = parseOptionalLimit(raw['limit']);
@@ -112,6 +119,21 @@ function parseOptionalLimit(raw: unknown): QueryParseResult<number | undefined> 
     return { ok: false, error: validationError('limit must be a non-negative integer') };
   }
   return { ok: true, value: parsed.data };
+}
+
+function labelsFrom(
+  raw: Record<string, unknown>,
+): QueryParseResult<Record<string, string> | undefined> {
+  const labels: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!key.startsWith('label.')) continue;
+    const labelKey = key.slice('label.'.length);
+    if (labelKey.length === 0 || typeof value !== 'string') {
+      return { ok: false, error: validationError('query labels must be non-empty strings') };
+    }
+    labels[labelKey] = value;
+  }
+  return { ok: true, value: Object.keys(labels).length > 0 ? labels : undefined };
 }
 
 /** Build (but do not start) the Veritrail HTTP server. */
@@ -194,7 +216,9 @@ function registerRoutes(
 
   // ---- raw ledger ingest ------------------------------------------------
   app.post('/api/events', writeRoute(['ingest']), async (request, reply) => {
-    const result = await ledger.append(request.body);
+    const scoped = eventForPrincipalScope(request.body, request.principal);
+    if (!scoped.ok) return replyError(reply, scoped.error);
+    const result = await ledger.append(scoped.value);
     if (!result.ok) return replyError(reply, result.error);
     return reply.code(201).send({ record: result.value });
   });
@@ -203,7 +227,9 @@ function registerRoutes(
   app.get('/api/audit/events', readRoute(auditRead), async (request, reply) => {
     const query = eventQueryFrom(request.query as Record<string, unknown>);
     if (!query.ok) return replyError(reply, query.error);
-    const records = await audit.search(query.value);
+    const scoped = scopedEventQuery(query.value, request.principal);
+    if (!scoped.ok) return replyError(reply, scoped.error);
+    const records = await audit.search(scoped.value);
     return reply.send(records);
   });
 
@@ -211,18 +237,24 @@ function registerRoutes(
     const seq = asNumber((request.params as Record<string, unknown>)['seq']);
     if (seq === undefined) return replyError(reply, validationError('seq must be a number'));
     const record = await audit.get(seq);
+    if (record !== null && !recordInPrincipalScope(record, request.principal)) {
+      return reply.code(404).send({ error: { code: 'NOT_FOUND' } });
+    }
     return record ? reply.send(record) : reply.code(404).send({ error: { code: 'NOT_FOUND' } });
   });
 
-  app.get('/api/audit/summary', readRoute(auditRead), async (_request, reply) =>
-    reply.send(await audit.summary()),
-  );
+  app.get('/api/audit/summary', readRoute(auditRead), async (request, reply) => {
+    if (isLabelScoped(request.principal)) return replyScopedRouteDenied(reply);
+    return reply.send(await audit.summary());
+  });
 
-  app.get('/api/audit/verify', readRoute(auditRead), async (_request, reply) =>
-    reply.send(await audit.verify()),
-  );
+  app.get('/api/audit/verify', readRoute(auditRead), async (request, reply) => {
+    if (isLabelScoped(request.principal)) return replyScopedRouteDenied(reply);
+    return reply.send(await audit.verify());
+  });
 
-  app.get('/api/audit/export', readRoute(auditRead), async (_request, reply) => {
+  app.get('/api/audit/export', readRoute(auditRead), async (request, reply) => {
+    if (isLabelScoped(request.principal)) return replyScopedRouteDenied(reply);
     const ndjson = await audit.exportNdjson();
     return reply.header('content-type', 'application/x-ndjson').send(ndjson);
   });
@@ -405,6 +437,7 @@ function registerRoutes(
 
   // ---- forensics --------------------------------------------------------
   app.get('/api/forensics/incident', readRoute(forensicsRead), async (request, reply) => {
+    if (isLabelScoped(request.principal)) return replyScopedRouteDenied(reply);
     const correlationId = asString((request.query as Record<string, unknown>)['correlationId']);
     if (correlationId === undefined) {
       return replyError(reply, validationError('correlationId is required'));
@@ -415,11 +448,14 @@ function registerRoutes(
   app.get('/api/forensics/timeline', readRoute(forensicsRead), async (request, reply) => {
     const query = eventQueryFrom(request.query as Record<string, unknown>);
     if (!query.ok) return replyError(reply, query.error);
-    const entries = await forensics.timeline(query.value);
+    const scoped = scopedEventQuery(query.value, request.principal);
+    if (!scoped.ok) return replyError(reply, scoped.error);
+    const entries = await forensics.timeline(scoped.value);
     return reply.send(entries);
   });
 
   app.get('/api/forensics/cause/:causationId', readRoute(forensicsRead), async (request, reply) => {
+    if (isLabelScoped(request.principal)) return replyScopedRouteDenied(reply);
     const id = String((request.params as Record<string, unknown>)['causationId']);
     return reply.send(await forensics.causeChain(id));
   });
@@ -480,6 +516,74 @@ function routeAuth(authenticator: ApiKeyAuthenticator | undefined) {
       const status = result.failure.reason === 'forbidden' ? 403 : 401;
       return reply.code(status).send({ error: result.failure.error.toJSON() });
     };
+}
+
+function isLabelScoped(principal: ApiKeyPrincipal | undefined): boolean {
+  return principal?.labelScope !== undefined;
+}
+
+function replyScopedRouteDenied(reply: FastifyReply): FastifyReply {
+  return replyError(reply, validationError('route requires an unscoped API key'));
+}
+
+function recordInPrincipalScope(
+  record: LedgerRecord,
+  principal: ApiKeyPrincipal | undefined,
+): boolean {
+  const labelScope = principal?.labelScope;
+  if (labelScope === undefined) return true;
+  return Object.entries(labelScope).every(([key, value]) => record.event.labels[key] === value);
+}
+
+function scopedEventQuery(
+  query: EventQuery,
+  principal: ApiKeyPrincipal | undefined,
+): QueryParseResult<EventQuery> {
+  const labelScope = principal?.labelScope;
+  if (labelScope === undefined) return { ok: true, value: query };
+
+  const labels = { ...(query.labels ?? {}) };
+  for (const [key, value] of Object.entries(labelScope)) {
+    const requested = labels[key];
+    if (requested !== undefined && requested !== value) {
+      return { ok: false, error: validationError('query label is outside API key scope') };
+    }
+    labels[key] = value;
+  }
+
+  return { ok: true, value: { ...query, labels } };
+}
+
+function eventForPrincipalScope(
+  input: unknown,
+  principal: ApiKeyPrincipal | undefined,
+): QueryParseResult<EventInput> {
+  const parsed = EventInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: validationError('event failed validation', { issues: zodIssues(parsed.error) }),
+    };
+  }
+
+  const labelScope = principal?.labelScope;
+  if (labelScope === undefined) return { ok: true, value: parsed.data };
+
+  for (const [key, value] of Object.entries(labelScope)) {
+    if (parsed.data.labels[key] !== value) {
+      return { ok: false, error: validationError('event labels are outside API key scope') };
+    }
+  }
+
+  return { ok: true, value: parsed.data };
+}
+
+function zodIssues(error: ZodError): JsonValue {
+  return error.issues.map((issue) => ({
+    path: issue.path.map((segment) => String(segment)).join('.'),
+    code: issue.code,
+    message: issue.message,
+  }));
 }
 
 async function recordAdminAction(

@@ -52,9 +52,10 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       transparency log.
 - [ ] **Server authN/authZ.** API-key auth, route roles, and ledger-recorded
       administrative policy/budget changes are implemented. Remaining work:
-      OIDC, tenant/project scoping, signed administrative action verification,
-      and broader policy composition beyond the current optional per-capability
-      operator route scopes. (threat: S1)
+      OIDC, projection-specific tenancy semantics, signed administrative action
+      verification, and broader policy composition beyond the current optional
+      per-capability route scopes and label-scoped raw ledger reads/writes.
+      (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -170,6 +171,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Added the first tenant/project scoping slice for server API
+  keys. Keys can now carry `labelScope` constraints; scoped `/api/events` writes
+  must include those exact event labels, and raw ledger-query reads force the
+  same labels before `limit` is applied. Core `EventQuery` now supports exact
+  label filters, with in-memory and relational-store regression tests. **Next:**
+  continue the server auth item with projection-specific tenancy semantics,
+  signed administrative action verification, or OIDC.
 - **2026-06-18** — Deepened server authZ with optional per-capability route
   scopes for API keys. Existing role-only keys keep their current behavior, while
   scoped operator keys can now be narrowed to surfaces such as `audit:read`,

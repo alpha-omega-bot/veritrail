@@ -343,6 +343,149 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('enforces API key label scopes on raw event writes and ledger queries', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'tenant-ingest',
+            actorId: 'tenant-agent',
+            secret: 'tenant-ingest-secret-0001',
+            roles: ['ingest'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-operator',
+            actorId: 'tenant-operator',
+            secret: 'tenant-operator-secret-0001',
+            roles: ['operator'],
+            scopes: ['audit:read', 'forensics:read'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'tenant-admin-secret-0001',
+            roles: ['admin'],
+          },
+        ],
+      },
+    });
+    try {
+      const adminHeaders = { authorization: 'Bearer tenant-admin-secret-0001', ...json };
+      const otherAppend = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: adminHeaders,
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          labels: { tenant: 'other', project: 'alpha' },
+          payload: { text: 'other tenant' },
+        }),
+      });
+      await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: adminHeaders,
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          labels: { tenant: 'acme', project: 'alpha' },
+          payload: { text: 'first scoped event' },
+        }),
+      });
+      await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: adminHeaders,
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          labels: { tenant: 'acme', project: 'alpha' },
+          payload: { text: 'second scoped event' },
+        }),
+      });
+
+      const deniedAppend = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: { authorization: 'Bearer tenant-ingest-secret-0001', ...json },
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          labels: { tenant: 'other', project: 'alpha' },
+          payload: { text: 'wrong tenant' },
+        }),
+      });
+      expect(deniedAppend.statusCode).toBe(400);
+      expect(deniedAppend.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'event labels are outside API key scope' },
+      });
+
+      const allowedAppend = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: { authorization: 'Bearer tenant-ingest-secret-0001', ...json },
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          labels: { tenant: 'acme', project: 'alpha' },
+          payload: { text: 'scoped write' },
+        }),
+      });
+      expect(allowedAppend.statusCode).toBe(201);
+
+      const scopedRead = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/audit/events?limit=2',
+        headers: { authorization: 'Bearer tenant-operator-secret-0001' },
+      });
+      expect(scopedRead.statusCode).toBe(200);
+      const records = scopedRead.json() as Array<{
+        seq: number;
+        event: { labels: Record<string, string>; payload: { text?: string } };
+      }>;
+      expect(records).toHaveLength(2);
+      expect(records.every((record) => record.event.labels['tenant'] === 'acme')).toBe(true);
+      expect(records.map((record) => record.event.payload.text)).toEqual([
+        'first scoped event',
+        'second scoped event',
+      ]);
+
+      const otherSeq = (otherAppend.json() as { record: { seq: number } }).record.seq;
+      const hiddenRecord = await scopedApp.inject({
+        method: 'GET',
+        url: `/api/audit/events/${otherSeq}`,
+        headers: { authorization: 'Bearer tenant-operator-secret-0001' },
+      });
+      expect(hiddenRecord.statusCode).toBe(404);
+
+      const wholeChainSummary = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/audit/summary',
+        headers: { authorization: 'Bearer tenant-operator-secret-0001' },
+      });
+      expect(wholeChainSummary.statusCode).toBe(400);
+      expect(wholeChainSummary.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
+      });
+
+      const conflictingRead = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/forensics/timeline?label.tenant=other',
+        headers: { authorization: 'Bearer tenant-operator-secret-0001' },
+      });
+      expect(conflictingRead.statusCode).toBe(400);
+      expect(conflictingRead.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'query label is outside API key scope' },
+      });
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('does not mutate admin config when the required audit event fails', async () => {
     const ledger = createInMemoryLedger();
     const originalAppend = ledger.append.bind(ledger);

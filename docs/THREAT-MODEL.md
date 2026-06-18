@@ -51,8 +51,10 @@ We use STRIDE as a checklist.
 ### Spoofing
 
 - **S1 — Impersonate an actor/operator.** _Mitigation:_ server authN + per-actor
-  scoping. ✔ API-key auth with route roles is implemented for the HTTP server;
-  OIDC and multi-tenant scoping remain future platform work.
+  scoping. ✔ API-key auth with route roles, optional route scopes, and
+  label-scoped raw event write / ledger-query read constraints are implemented
+  for the HTTP server; OIDC and full multi-tenant isolation remain future
+  platform work.
 
 ### Repudiation
 
@@ -67,8 +69,10 @@ We use STRIDE as a checklist.
   cryptographic erasure remain Milestone 1 work. Protect the store with
   OS/storage controls. ⚠ **Residual risk.**
 - **I2 — Over-broad reads via the API.** _Mitigation:_ authZ + query scoping
-  (Milestone 1). ✔ route-level API-key roles now protect read APIs when auth is
-  configured; tenant/project query scoping remains future platform work.
+  (Milestone 1). ✔ route-level API-key roles protect read APIs when auth is
+  configured, and label-scoped keys force matching labels on raw ledger-query
+  reads. Projection-specific tenancy semantics and full tenant isolation remain
+  future platform work.
 
 ### Denial of service
 
