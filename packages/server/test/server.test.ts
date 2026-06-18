@@ -51,6 +51,98 @@ describe('Veritrail HTTP server', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('treats audit event limit=0 as an explicit empty result', async () => {
+    const app = await buildServer({ logger: false });
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: json,
+        payload: body({ type: 'note', actorId: 'agent-1', payload: { text: 'hello' } }),
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/audit/events?limit=0' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects invalid audit event limits at the route boundary', async () => {
+    const app = await buildServer({ logger: false });
+    try {
+      for (const limit of ['-1', '1.5', 'not-a-number']) {
+        const res = await app.inject({
+          method: 'GET',
+          url: `/api/audit/events?limit=${encodeURIComponent(limit)}`,
+        });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toMatchObject({
+          error: { code: 'VALIDATION', message: 'limit must be a non-negative integer' },
+        });
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('treats forensics timeline limit=0 as an explicit empty result', async () => {
+    const app = await buildServer({ logger: false });
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: json,
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          correlationId: 'run-1',
+          payload: { text: 'hello' },
+        }),
+      });
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/forensics/timeline?correlationId=run-1&limit=0',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('treats decision list and recall limit=0 as explicit empty results', async () => {
+    const app = await buildServer({ logger: false });
+    try {
+      await app.inject({
+        method: 'POST',
+        url: '/api/decisions',
+        headers: json,
+        payload: body({
+          actorId: 'agent-1',
+          summary: 'Use the database index',
+          rationale: 'The lookup path is selective',
+          chosen: 'index',
+        }),
+      });
+
+      const list = await app.inject({ method: 'GET', url: '/api/decisions?limit=0' });
+      expect(list.statusCode).toBe(200);
+      expect(list.json()).toEqual([]);
+
+      const recall = await app.inject({
+        method: 'GET',
+        url: '/api/decisions/recall?text=database&limit=0',
+      });
+      expect(recall.statusCode).toBe(200);
+      expect(recall.json()).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('evaluates a permission policy', async () => {
     await app.inject({
       method: 'POST',

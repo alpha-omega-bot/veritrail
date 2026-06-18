@@ -73,3 +73,7 @@ when an upstream gateway provides equivalent controls. The binary accepts:
 - `VERITRAIL_RATE_LIMIT_MAX` (`0` disables server-side rate limiting)
 - `VERITRAIL_RATE_LIMIT_WINDOW_MS`
 - `VERITRAIL_MAX_IN_FLIGHT_WRITES` (`0` disables write backpressure)
+
+Query endpoints that accept `limit` require a non-negative integer. `limit=0`
+is valid and returns zero results; negative, fractional, empty, or non-numeric
+limits are rejected with `VALIDATION` / HTTP 400 at the server boundary.
