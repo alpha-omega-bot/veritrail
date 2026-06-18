@@ -110,9 +110,9 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ## P2.5 — Cross-cutting correctness (smaller, do alongside module work)
 
-- [ ] **SDK client** throws raw `SyntaxError` on non-JSON HTTP bodies →
+- [x] **SDK client** throws raw `SyntaxError` on non-JSON HTTP bodies →
       wrap to `VeritrailError` (uniform-error contract). (review: medium) — partially
-      addressed in bootstrap; verify and add a test.
+      addressed in bootstrap; verified with regression tests.
 - [ ] **Audit `summary()`** can return an internally inconsistent snapshot under
       concurrent appends (multiple independent reads). Take one consistent
       snapshot. (review: low)
@@ -169,6 +169,12 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Verified and documented the SDK HTTP client's uniform-error
+  contract. Added regression tests proving non-JSON error and success responses
+  are wrapped as `VeritrailError` instead of leaking raw `SyntaxError`, and added
+  the missing package README for `@veritrail/sdk`. **Next:** continue small
+  correctness items (`Audit.summary()` snapshot consistency or server `limit`
+  semantics), or start a larger P1 slice.
 - **2026-06-18** — Hardened `DefaultIdGenerator`. It now uses a per-generator
   logical timestamp that never moves backward and a widened sortable counter, so
   ids remain unique and lexicographically ordered when the injected clock moves
