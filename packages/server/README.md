@@ -41,11 +41,38 @@ Roles:
 - `admin` — mutate server-held configuration such as policies and budgets;
   `admin` also satisfies lower-privilege route checks.
 
+Operator keys may also include optional route scopes to narrow access after the
+role check succeeds. Omitting `scopes` preserves the role-only behavior. Admin
+keys satisfy all scopes.
+
+```ts
+const app = await buildServer({
+  auth: {
+    apiKeys: [
+      {
+        id: 'audit-reader',
+        actorId: 'operator-1',
+        secret: process.env.VERITRAIL_AUDIT_KEY!,
+        roles: ['operator'],
+        scopes: ['audit:read'],
+      },
+    ],
+  },
+});
+```
+
+Supported scopes: `audit:read`, `permissions:read`, `spend:read`,
+`decisions:read`, `evidence:read`, `vendor-risk:read`, `forensics:read`,
+`rollback:read`, `rollback:execute`.
+
 Administrative policy and budget changes append `admin.action` facts to the same
 ledger for operator audit.
 
 The `veritrail-server` binary accepts `VERITRAIL_API_KEYS` as a comma-separated
-list of `id:actorId:secret:role1|role2` entries.
+list of `id:actorId:secret:role1|role2[:scope1|scope2]` entries. For example,
+`audit:operator-1:$SECRET:operator:audit:read|rollback:execute` creates an
+operator key restricted to audit reads and rollback execution. Invalid role or
+scope tokens are rejected at startup.
 
 ## Limits
 

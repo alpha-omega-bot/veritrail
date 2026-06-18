@@ -281,6 +281,68 @@ describe('Veritrail HTTP server auth', () => {
     expect(res.statusCode).toBe(201);
   });
 
+  it('narrows operator keys with optional route scopes', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'audit-reader',
+            actorId: 'operator-audit',
+            secret: 'audit-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['audit:read'],
+          },
+          {
+            id: 'legacy-operator',
+            actorId: 'operator-legacy',
+            secret: 'legacy-operator-secret-0001',
+            roles: ['operator'],
+          },
+          {
+            id: 'admin',
+            actorId: 'operator-admin',
+            secret: 'admin-scope-secret-0001',
+            roles: ['admin'],
+            scopes: ['spend:read'],
+          },
+        ],
+      },
+    });
+    try {
+      const audit = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/audit/summary',
+        headers: { authorization: 'Bearer audit-reader-secret-0001' },
+      });
+      expect(audit.statusCode).toBe(200);
+
+      const deniedSpend = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/spend/status',
+        headers: { authorization: 'Bearer audit-reader-secret-0001' },
+      });
+      expect(deniedSpend.statusCode).toBe(403);
+      expect(deniedSpend.json()).toMatchObject({ error: { code: 'VALIDATION' } });
+
+      const legacySpend = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/spend/status',
+        headers: { authorization: 'Bearer legacy-operator-secret-0001' },
+      });
+      expect(legacySpend.statusCode).toBe(200);
+
+      const adminAudit = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/audit/summary',
+        headers: { authorization: 'Bearer admin-scope-secret-0001' },
+      });
+      expect(adminAudit.statusCode).toBe(200);
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('does not mutate admin config when the required audit event fails', async () => {
     const ledger = createInMemoryLedger();
     const originalAppend = ledger.append.bind(ledger);
