@@ -53,8 +53,9 @@ We use STRIDE as a checklist.
 - **S1 — Impersonate an actor/operator.** _Mitigation:_ server authN + per-actor
   scoping. ✔ API-key auth with route roles, optional route scopes, and
   label-scoped raw event write / ledger-query read constraints are implemented
-  for the HTTP server; OIDC and full multi-tenant isolation remain future
-  platform work.
+  for the HTTP server. Administrative policy/budget mutations can also require
+  signed HMAC request intent with timestamp freshness and nonce replay checks.
+  OIDC and full multi-tenant isolation remain future platform work.
 
 ### Repudiation
 

@@ -93,6 +93,56 @@ const app = await buildServer({
 Administrative policy and budget changes append `admin.action` facts to the same
 ledger for operator audit.
 
+Deployments can additionally require signed administrative mutation requests.
+When `auth.adminActionSigning` is configured, policy and budget write routes
+require these headers before server-held configuration changes:
+
+- `x-veritrail-admin-key-id`
+- `x-veritrail-admin-timestamp` (epoch milliseconds)
+- `x-veritrail-admin-nonce`
+- `x-veritrail-admin-signature` (hex HMAC-SHA256)
+
+The signature is HMAC-SHA256 over canonical JSON containing:
+`algorithm`, `keyId`, `timestamp`, `nonce`, uppercase `method`, request `path`,
+and the canonical JSON SHA-256 `bodyHash`. Timestamps must be within the
+configured freshness window and nonces cannot be reused within that window.
+Successful admin mutations record the verified signature receipt in the emitted
+`admin.action` event.
+
+```ts
+import { hashJson, asJson } from '@veritrail/core';
+import { buildServer, signAdminAction } from '@veritrail/server';
+
+const receipt = {
+  keyId: 'admin-action',
+  timestamp: Date.now(),
+  nonce: crypto.randomUUID(),
+  method: 'POST',
+  path: '/api/permissions/policies',
+  bodyHash: hashJson(asJson(policyBody)),
+  algorithm: 'hmac-sha256' as const,
+};
+
+const signature = signAdminAction(process.env.VERITRAIL_ADMIN_ACTION_SIGNING_SECRET!, receipt);
+
+const app = await buildServer({
+  auth: {
+    adminActionSigning: {
+      secret: process.env.VERITRAIL_ADMIN_ACTION_SIGNING_SECRET!,
+      keyId: 'admin-action',
+    },
+    apiKeys: [
+      {
+        id: 'admin-key',
+        actorId: 'admin-1',
+        secret: process.env.VERITRAIL_ADMIN_KEY!,
+        roles: ['admin'],
+      },
+    ],
+  },
+});
+```
+
 The `veritrail-server` binary accepts `VERITRAIL_API_KEYS` as a comma-separated
 list of `id:actorId:secret:role1|role2[:scope1|scope2[;labels=k=v|k2=v2]]`
 entries. For example,
@@ -100,6 +150,12 @@ entries. For example,
 creates an operator key restricted to audit reads, rollback execution, and the
 `tenant=acme` / `project=alpha` event-label scope. Invalid role, scope, or label
 tokens are rejected at startup.
+
+The binary also accepts:
+
+- `VERITRAIL_ADMIN_ACTION_SIGNING_SECRET`
+- `VERITRAIL_ADMIN_ACTION_SIGNING_KEY_ID` (default `admin-action`)
+- `VERITRAIL_ADMIN_ACTION_SIGNING_MAX_SKEW_MS` (default 5 minutes)
 
 ## Limits
 

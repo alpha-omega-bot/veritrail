@@ -52,10 +52,10 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       transparency log.
 - [ ] **Server authN/authZ.** API-key auth, route roles, and ledger-recorded
       administrative policy/budget changes are implemented. Remaining work:
-      OIDC, projection-specific tenancy semantics, signed administrative action
-      verification, and broader policy composition beyond the current optional
-      per-capability route scopes and label-scoped raw ledger reads/writes.
-      (threat: S1)
+      OIDC, projection-specific tenancy semantics, and broader policy composition
+      beyond the current optional per-capability route scopes, label-scoped raw
+      ledger reads/writes, and signed administrative mutation requests. (threat:
+      S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -171,6 +171,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Added opt-in signed administrative mutation verification for
+  server policy/budget writes. When configured, admin routes require
+  `x-veritrail-admin-*` HMAC headers over method, path, timestamp, nonce, and
+  canonical body hash; stale, replayed, or tampered requests fail before
+  server-held config changes, and successful mutations record the signature
+  receipt in the `admin.action` ledger fact. **Next:** continue server auth with
+  OIDC, projection-specific tenancy semantics, or broader policy composition.
 - **2026-06-18** — Added the first tenant/project scoping slice for server API
   keys. Keys can now carry `labelScope` constraints; scoped `/api/events` writes
   must include those exact event labels, and raw ledger-query reads force the

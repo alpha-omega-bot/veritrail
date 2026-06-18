@@ -1,6 +1,13 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
-import { validationError, type VeritrailError } from '@veritrail/core';
+import {
+  asJson,
+  canonicalize,
+  sha256Hex,
+  validationError,
+  type JsonValue,
+  type VeritrailError,
+} from '@veritrail/core';
 import { z } from 'zod';
 
 export const ServerRoleSchema = z.enum(['ingest', 'operator', 'admin']);
@@ -54,6 +61,18 @@ export interface RouteAccess {
 
 export interface AuthConfig {
   readonly apiKeys: readonly ApiKeyConfig[];
+  /**
+   * Optional request-signature verification for administrative mutations.
+   * When enabled, admin routes require `x-veritrail-admin-*` HMAC headers before
+   * server-held configuration is changed.
+   */
+  readonly adminActionSigning?: AdminActionSigningConfig;
+}
+
+export interface AdminActionSigningConfig {
+  readonly secret: string;
+  readonly keyId?: string;
+  readonly maxSkewMs?: number;
 }
 
 export type AuthFailureReason = 'missing' | 'invalid' | 'forbidden';
@@ -66,6 +85,33 @@ export interface AuthFailure {
 export type AuthResult =
   | { readonly ok: true; readonly principal: ApiKeyPrincipal }
   | { readonly ok: false; readonly failure: AuthFailure };
+
+export interface AdminActionSignatureInput {
+  readonly method: string;
+  readonly path: string;
+  readonly body: unknown;
+  readonly timestamp: string | undefined;
+  readonly nonce: string | undefined;
+  readonly keyId: string | undefined;
+  readonly signature: string | undefined;
+  readonly now: number;
+}
+
+export type AdminActionSignatureResult =
+  | { readonly ok: true; readonly receipt: AdminActionSignatureReceipt }
+  | { readonly ok: false; readonly error: VeritrailError };
+
+export interface AdminActionSignatureReceipt {
+  readonly keyId: string;
+  readonly timestamp: number;
+  readonly nonce: string;
+  readonly method: string;
+  readonly path: string;
+  readonly bodyHash: string;
+  readonly algorithm: 'hmac-sha256';
+}
+
+const DEFAULT_ADMIN_ACTION_SIGNATURE_MAX_SKEW_MS = 5 * 60 * 1000;
 
 const ApiKeyConfigSchema = z
   .object({
@@ -81,6 +127,14 @@ const ApiKeyConfigSchema = z
 const AuthConfigSchema = z
   .object({
     apiKeys: z.array(ApiKeyConfigSchema).min(1),
+    adminActionSigning: z
+      .object({
+        secret: z.string().min(16),
+        keyId: z.string().min(1).max(256).optional(),
+        maxSkewMs: z.number().int().positive().safe().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -91,9 +145,15 @@ interface StoredApiKey {
 
 export class ApiKeyAuthenticator {
   readonly #keys: readonly StoredApiKey[];
+  readonly #adminSigning: NormalizedAdminActionSigningConfig | undefined;
+  readonly #seenAdminNonces = new Map<string, number>();
 
   constructor(config: AuthConfig) {
     const parsed = AuthConfigSchema.parse(config);
+    this.#adminSigning =
+      parsed.adminActionSigning === undefined
+        ? undefined
+        : normalizeAdminActionSigning(parsed.adminActionSigning);
     this.#keys = parsed.apiKeys.map((key) => ({
       principal: {
         id: key.id,
@@ -104,6 +164,10 @@ export class ApiKeyAuthenticator {
       },
       secretHash: hashSecret(key.secret),
     }));
+  }
+
+  get adminActionSigningRequired(): boolean {
+    return this.#adminSigning !== undefined;
   }
 
   authenticate(
@@ -127,6 +191,87 @@ export class ApiKeyAuthenticator {
     }
     return { ok: false, failure: authFailure('invalid', 'API key is invalid') };
   }
+
+  verifyAdminActionSignature(input: AdminActionSignatureInput): AdminActionSignatureResult {
+    const config = this.#adminSigning;
+    if (config === undefined) {
+      return {
+        ok: true,
+        receipt: {
+          keyId: 'unsigned',
+          timestamp: input.now,
+          nonce: '',
+          method: input.method.toUpperCase(),
+          path: input.path,
+          bodyHash: bodyHash(input.body),
+          algorithm: 'hmac-sha256',
+        },
+      };
+    }
+
+    if (
+      input.timestamp === undefined ||
+      input.nonce === undefined ||
+      input.keyId === undefined ||
+      input.signature === undefined
+    ) {
+      return { ok: false, error: validationError('admin action signature is required') };
+    }
+    if (input.keyId !== config.keyId) {
+      return { ok: false, error: validationError('admin action signature key is invalid') };
+    }
+    if (!/^[0-9a-f]{64}$/.test(input.signature)) {
+      return { ok: false, error: validationError('admin action signature is invalid') };
+    }
+
+    const timestamp = Number(input.timestamp);
+    if (!Number.isSafeInteger(timestamp) || timestamp < 0) {
+      return { ok: false, error: validationError('admin action signature timestamp is invalid') };
+    }
+    if (Math.abs(input.now - timestamp) > config.maxSkewMs) {
+      return { ok: false, error: validationError('admin action signature is stale') };
+    }
+
+    const nonce = input.nonce.trim();
+    if (nonce.length === 0 || nonce.length > 256) {
+      return { ok: false, error: validationError('admin action signature nonce is invalid') };
+    }
+    this.#pruneAdminNonces(input.now, config.maxSkewMs);
+    const nonceKey = `${config.keyId}:${nonce}`;
+    if (this.#seenAdminNonces.has(nonceKey)) {
+      return { ok: false, error: validationError('admin action signature nonce was already used') };
+    }
+
+    const receipt = {
+      keyId: config.keyId,
+      timestamp,
+      nonce,
+      method: input.method.toUpperCase(),
+      path: input.path,
+      bodyHash: bodyHash(input.body),
+      algorithm: 'hmac-sha256' as const,
+    };
+    const expected = signAdminAction(config.secret, receipt);
+    if (!constantTimeHexEqual(expected, input.signature)) {
+      return { ok: false, error: validationError('admin action signature is invalid') };
+    }
+
+    this.#seenAdminNonces.set(nonceKey, timestamp);
+    return { ok: true, receipt };
+  }
+
+  #pruneAdminNonces(now: number, maxSkewMs: number): void {
+    const oldestFresh = now - maxSkewMs;
+    for (const [key, timestamp] of this.#seenAdminNonces) {
+      if (timestamp < oldestFresh) this.#seenAdminNonces.delete(key);
+    }
+  }
+}
+
+export function signAdminAction(secret: string, receipt: AdminActionSignatureReceipt): string {
+  return createHmac('sha256', secret)
+    .update(adminActionSigningPayload(receipt), 'utf8')
+    .digest('hex');
 }
 
 export function parseApiKeyEntries(raw: string | undefined): ApiKeyConfig[] {
@@ -246,4 +391,59 @@ function hashSecret(secret: string): Buffer {
 
 function authFailure(reason: AuthFailureReason, message: string): AuthFailure {
   return { reason, error: validationError(message) };
+}
+
+interface NormalizedAdminActionSigningConfig {
+  readonly secret: string;
+  readonly keyId: string;
+  readonly maxSkewMs: number;
+}
+
+function normalizeAdminActionSigning(config: {
+  readonly secret: string;
+  readonly keyId?: string | undefined;
+  readonly maxSkewMs?: number | undefined;
+}): NormalizedAdminActionSigningConfig {
+  return {
+    secret: config.secret,
+    keyId: config.keyId ?? 'admin-action',
+    maxSkewMs: config.maxSkewMs ?? DEFAULT_ADMIN_ACTION_SIGNATURE_MAX_SKEW_MS,
+  };
+}
+
+function adminActionSigningPayload(receipt: AdminActionSignatureReceipt): string {
+  return canonicalize({
+    algorithm: receipt.algorithm,
+    bodyHash: receipt.bodyHash,
+    keyId: receipt.keyId,
+    method: receipt.method,
+    nonce: receipt.nonce,
+    path: receipt.path,
+    timestamp: receipt.timestamp,
+  });
+}
+
+function bodyHash(body: unknown): string {
+  return sha256Hex(canonicalize(asJson(body ?? null)));
+}
+
+function constantTimeHexEqual(expected: string, actual: string): boolean {
+  if (!/^[0-9a-f]+$/.test(actual) || expected.length !== actual.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(actual, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+export function adminActionSignatureDetails(receipt: AdminActionSignatureReceipt): JsonValue {
+  return {
+    keyId: receipt.keyId,
+    timestamp: receipt.timestamp,
+    nonce: receipt.nonce,
+    method: receipt.method,
+    path: receipt.path,
+    bodyHash: receipt.bodyHash,
+    algorithm: receipt.algorithm,
+  };
 }

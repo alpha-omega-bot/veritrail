@@ -1,12 +1,46 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
-import { createInMemoryLedger, storageError, type LedgerRecord } from '@veritrail/core';
+import {
+  asJson,
+  createInMemoryLedger,
+  hashJson,
+  storageError,
+  type LedgerRecord,
+} from '@veritrail/core';
 
 import { buildServer } from '../src/app.js';
+import { signAdminAction, type AdminActionSignatureReceipt } from '../src/auth.js';
 
 const json = { 'content-type': 'application/json' };
 const body = (value: unknown): string => JSON.stringify(value);
+const adminSignatureSecret = 'admin-action-signing-secret-0001';
+
+function adminSignatureHeaders(input: {
+  method: string;
+  path: string;
+  body?: unknown;
+  timestamp?: number;
+  nonce?: string;
+  keyId?: string;
+  secret?: string;
+}): Record<string, string> {
+  const receipt: AdminActionSignatureReceipt = {
+    keyId: input.keyId ?? 'admin-action',
+    timestamp: input.timestamp ?? 1_700_000_000_000,
+    nonce: input.nonce ?? 'nonce-1',
+    method: input.method,
+    path: input.path,
+    bodyHash: hashJson(asJson(input.body ?? null)),
+    algorithm: 'hmac-sha256',
+  };
+  return {
+    'x-veritrail-admin-key-id': receipt.keyId,
+    'x-veritrail-admin-timestamp': String(receipt.timestamp),
+    'x-veritrail-admin-nonce': receipt.nonce,
+    'x-veritrail-admin-signature': signAdminAction(input.secret ?? adminSignatureSecret, receipt),
+  };
+}
 
 describe('Veritrail HTTP server', () => {
   let app: FastifyInstance;
@@ -502,6 +536,7 @@ describe('Veritrail HTTP server auth', () => {
     const failingApp = await buildServer({
       logger: false,
       ledger,
+      clock: { now: () => 1_700_000_000_000 },
       auth: {
         apiKeys: [{ id: 'admin', actorId: 'operator-1', secret: adminKey, roles: ['admin'] }],
       },
@@ -530,6 +565,242 @@ describe('Veritrail HTTP server auth', () => {
       ).toEqual([]);
     } finally {
       await failingApp.close();
+    }
+  });
+
+  it('requires signed admin actions when configured and records the signature receipt', async () => {
+    const ledger = createInMemoryLedger({ clock: { now: () => 1_700_000_000_000 } });
+    const signedApp = await buildServer({
+      logger: false,
+      ledger,
+      clock: { now: () => 1_700_000_000_000 },
+      auth: {
+        adminActionSigning: {
+          secret: adminSignatureSecret,
+          keyId: 'admin-action',
+          maxSkewMs: 60_000,
+        },
+        apiKeys: [{ id: 'admin', actorId: 'operator-1', secret: adminKey, roles: ['admin'] }],
+      },
+    });
+    try {
+      const payload = {
+        id: 'pol-signed',
+        name: 'signed policy',
+        effect: 'allow',
+        match: { actionTypes: ['tool.*'] },
+      };
+      const missing = await signedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers: { authorization: `Bearer ${adminKey}`, ...json },
+        payload: body(payload),
+      });
+      expect(missing.statusCode).toBe(400);
+      expect(missing.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'admin action signature is required' },
+      });
+
+      const signed = await signedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers: {
+          authorization: `Bearer ${adminKey}`,
+          ...json,
+          ...adminSignatureHeaders({
+            method: 'POST',
+            path: '/api/permissions/policies',
+            body: payload,
+          }),
+        },
+        payload: body(payload),
+      });
+      expect(signed.statusCode).toBe(200);
+
+      const policies = await signedApp.inject({
+        method: 'GET',
+        url: '/api/permissions/policies',
+        headers: { authorization: `Bearer ${adminKey}` },
+      });
+      expect(policies.json()).toHaveLength(1);
+
+      const budgetPayload = {
+        id: 'bud-signed',
+        name: 'signed budget',
+        scope: { kind: 'global' },
+        limit: { currency: 'USD', amountMinor: 1_000 },
+      };
+      const budget = await signedApp.inject({
+        method: 'POST',
+        url: '/api/spend/budgets',
+        headers: {
+          authorization: `Bearer ${adminKey}`,
+          ...json,
+          ...adminSignatureHeaders({
+            method: 'POST',
+            path: '/api/spend/budgets',
+            body: budgetPayload,
+            nonce: 'nonce-2',
+          }),
+        },
+        payload: body(budgetPayload),
+      });
+      expect(budget.statusCode).toBe(200);
+
+      const records = await ledger.query({ types: ['admin.action'] });
+      expect(records).toHaveLength(2);
+      expect(records[0]?.event.payload).toMatchObject({
+        action: 'policy.upserted',
+        targetType: 'policy',
+        targetId: 'pol-signed',
+        details: {
+          signature: {
+            keyId: 'admin-action',
+            timestamp: 1_700_000_000_000,
+            nonce: 'nonce-1',
+            method: 'POST',
+            path: '/api/permissions/policies',
+            algorithm: 'hmac-sha256',
+          },
+        },
+      });
+      expect(records[1]?.event.payload).toMatchObject({
+        action: 'budget.upserted',
+        targetType: 'budget',
+        targetId: 'bud-signed',
+        details: {
+          signature: {
+            keyId: 'admin-action',
+            timestamp: 1_700_000_000_000,
+            nonce: 'nonce-2',
+            method: 'POST',
+            path: '/api/spend/budgets',
+            algorithm: 'hmac-sha256',
+          },
+        },
+      });
+    } finally {
+      await signedApp.close();
+    }
+  });
+
+  it('rejects stale, replayed, and tampered signed admin actions before mutation', async () => {
+    const ledger = createInMemoryLedger({ clock: { now: () => 1_700_000_000_000 } });
+    const signedApp = await buildServer({
+      logger: false,
+      ledger,
+      clock: { now: () => 1_700_000_000_000 },
+      auth: {
+        adminActionSigning: {
+          secret: adminSignatureSecret,
+          keyId: 'admin-action',
+          maxSkewMs: 60_000,
+        },
+        apiKeys: [{ id: 'admin', actorId: 'operator-1', secret: adminKey, roles: ['admin'] }],
+      },
+    });
+    try {
+      const stalePayload = {
+        id: 'pol-stale',
+        name: 'stale policy',
+        effect: 'allow',
+        match: { actionTypes: ['tool.*'] },
+      };
+      const stale = await signedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers: {
+          authorization: `Bearer ${adminKey}`,
+          ...json,
+          ...adminSignatureHeaders({
+            method: 'POST',
+            path: '/api/permissions/policies',
+            body: stalePayload,
+            timestamp: 1_699_999_000_000,
+            nonce: 'stale',
+          }),
+        },
+        payload: body(stalePayload),
+      });
+      expect(stale.statusCode).toBe(400);
+      expect(stale.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'admin action signature is stale' },
+      });
+
+      const payload = {
+        id: 'pol-once',
+        name: 'signed policy',
+        effect: 'allow',
+        match: { actionTypes: ['tool.*'] },
+      };
+      const headers = {
+        authorization: `Bearer ${adminKey}`,
+        ...json,
+        ...adminSignatureHeaders({
+          method: 'POST',
+          path: '/api/permissions/policies',
+          body: payload,
+          nonce: 'replay',
+        }),
+      };
+      const first = await signedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers,
+        payload: body(payload),
+      });
+      expect(first.statusCode).toBe(200);
+
+      const replay = await signedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers,
+        payload: body({ ...payload, id: 'pol-replayed' }),
+      });
+      expect(replay.statusCode).toBe(400);
+      expect(replay.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'admin action signature nonce was already used' },
+      });
+
+      const tamperedPayload = {
+        id: 'pol-tampered',
+        name: 'tampered policy',
+        effect: 'allow',
+        match: { actionTypes: ['tool.*'] },
+      };
+      const tampered = await signedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers: {
+          authorization: `Bearer ${adminKey}`,
+          ...json,
+          ...adminSignatureHeaders({
+            method: 'POST',
+            path: '/api/permissions/policies',
+            body: { ...tamperedPayload, name: 'original body' },
+            nonce: 'tampered',
+          }),
+        },
+        payload: body(tamperedPayload),
+      });
+      expect(tampered.statusCode).toBe(400);
+      expect(tampered.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'admin action signature is invalid' },
+      });
+
+      const policies = await signedApp.inject({
+        method: 'GET',
+        url: '/api/permissions/policies',
+        headers: { authorization: `Bearer ${adminKey}` },
+      });
+      expect((policies.json() as unknown[]).map((policy) => (policy as { id: string }).id)).toEqual(
+        ['pol-once'],
+      );
+      expect(
+        (await ledger.query({ types: ['admin.action'] })).map((r: LedgerRecord) => r.event.payload),
+      ).toHaveLength(1);
+    } finally {
+      await signedApp.close();
     }
   });
 });

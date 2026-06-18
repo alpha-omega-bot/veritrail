@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { asJson, hashJson } from '@veritrail/core';
 
 import {
   ApiKeyAuthenticator,
   hasAccess,
   parseApiKeyEntries,
   parseAuthHeader,
+  signAdminAction,
+  type AdminActionSignatureReceipt,
 } from '../src/auth.js';
 
 describe('ApiKeyAuthenticator', () => {
@@ -137,6 +140,71 @@ describe('ApiKeyAuthenticator', () => {
           ],
         }),
     ).toThrow();
+  });
+
+  it('verifies signed administrative action requests and rejects tampering', () => {
+    const auth = new ApiKeyAuthenticator({
+      adminActionSigning: {
+        secret: 'admin-action-signing-secret-0001',
+        keyId: 'admin-action',
+        maxSkewMs: 60_000,
+      },
+      apiKeys: [
+        {
+          id: 'admin',
+          actorId: 'operator-1',
+          secret: 'admin-secret-0001',
+          roles: ['admin'],
+        },
+      ],
+    });
+    const receipt: AdminActionSignatureReceipt = {
+      keyId: 'admin-action',
+      timestamp: 1_700_000_000_000,
+      nonce: 'nonce-1',
+      method: 'POST',
+      path: '/api/permissions/policies',
+      bodyHash: '0'.repeat(64),
+      algorithm: 'hmac-sha256',
+    };
+    const signature = signAdminAction('admin-action-signing-secret-0001', receipt);
+
+    expect(
+      auth.verifyAdminActionSignature({
+        method: 'POST',
+        path: '/api/permissions/policies',
+        body: null,
+        timestamp: String(receipt.timestamp),
+        nonce: receipt.nonce,
+        keyId: receipt.keyId,
+        signature,
+        now: receipt.timestamp,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { message: 'admin action signature is invalid' },
+    });
+
+    const matchingBodyReceipt: AdminActionSignatureReceipt = {
+      ...receipt,
+      bodyHash: hashJson(asJson(null)),
+    };
+    const matchingSignature = signAdminAction(
+      'admin-action-signing-secret-0001',
+      matchingBodyReceipt,
+    );
+    expect(
+      auth.verifyAdminActionSignature({
+        method: 'POST',
+        path: '/api/permissions/policies',
+        body: null,
+        timestamp: String(matchingBodyReceipt.timestamp),
+        nonce: matchingBodyReceipt.nonce,
+        keyId: matchingBodyReceipt.keyId,
+        signature: matchingSignature,
+        now: matchingBodyReceipt.timestamp,
+      }),
+    ).toMatchObject({ ok: true });
   });
 });
 
