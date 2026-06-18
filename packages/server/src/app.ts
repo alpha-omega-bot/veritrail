@@ -70,7 +70,23 @@ const AuthorizeInputSchema = z
   })
   .strict();
 
-function eventQueryFrom(raw: Record<string, unknown>): EventQuery {
+const QueryNonNegativeIntegerSchema = z
+  .union([
+    z.number(),
+    z
+      .string()
+      .trim()
+      .min(1)
+      .regex(/^\d+$/)
+      .transform((value) => Number(value)),
+  ])
+  .pipe(z.number().finite().int().safe().nonnegative());
+
+type QueryParseResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: ReturnType<typeof validationError> };
+
+function eventQueryFrom(raw: Record<string, unknown>): QueryParseResult<EventQuery> {
   const query: EventQuery = {};
   const fromSeq = asNumber(raw['fromSeq']);
   if (fromSeq !== undefined) query.fromSeq = fromSeq;
@@ -82,9 +98,19 @@ function eventQueryFrom(raw: Record<string, unknown>): EventQuery {
   if (correlationId !== undefined) query.correlationId = correlationId;
   const type = asString(raw['type']);
   if (type !== undefined && isEventType(type)) query.types = [type];
-  const limit = asNumber(raw['limit']);
-  if (limit !== undefined) query.limit = limit;
-  return query;
+  const limit = parseOptionalLimit(raw['limit']);
+  if (!limit.ok) return limit;
+  if (limit.value !== undefined) query.limit = limit.value;
+  return { ok: true, value: query };
+}
+
+function parseOptionalLimit(raw: unknown): QueryParseResult<number | undefined> {
+  if (raw === undefined) return { ok: true, value: undefined };
+  const parsed = QueryNonNegativeIntegerSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, error: validationError('limit must be a non-negative integer') };
+  }
+  return { ok: true, value: parsed.data };
 }
 
 /** Build (but do not start) the Veritrail HTTP server. */
@@ -163,7 +189,9 @@ function registerRoutes(
 
   // ---- audit ------------------------------------------------------------
   app.get('/api/audit/events', readRoute(['operator']), async (request, reply) => {
-    const records = await audit.search(eventQueryFrom(request.query as Record<string, unknown>));
+    const query = eventQueryFrom(request.query as Record<string, unknown>);
+    if (!query.ok) return replyError(reply, query.error);
+    const records = await audit.search(query.value);
     return reply.send(records);
   });
 
@@ -294,8 +322,9 @@ function registerRoutes(
     const opts: { actorId?: string; limit?: number } = {};
     const actorId = asString(q['actorId']);
     if (actorId !== undefined) opts.actorId = actorId;
-    const limit = asNumber(q['limit']);
-    if (limit !== undefined) opts.limit = limit;
+    const limit = parseOptionalLimit(q['limit']);
+    if (!limit.ok) return replyError(reply, limit.error);
+    if (limit.value !== undefined) opts.limit = limit.value;
     return reply.send(await decisionMemory.list(opts));
   });
 
@@ -306,8 +335,9 @@ function registerRoutes(
     if (text !== undefined) query.text = text;
     const actorId = asString(q['actorId']);
     if (actorId !== undefined) query.actorId = actorId;
-    const limit = asNumber(q['limit']);
-    if (limit !== undefined) query.limit = limit;
+    const limit = parseOptionalLimit(q['limit']);
+    if (!limit.ok) return replyError(reply, limit.error);
+    if (limit.value !== undefined) query.limit = limit.value;
     return reply.send(await decisionMemory.recall(query));
   });
 
@@ -371,9 +401,9 @@ function registerRoutes(
   });
 
   app.get('/api/forensics/timeline', readRoute(['operator']), async (request, reply) => {
-    const entries = await forensics.timeline(
-      eventQueryFrom(request.query as Record<string, unknown>),
-    );
+    const query = eventQueryFrom(request.query as Record<string, unknown>);
+    if (!query.ok) return replyError(reply, query.error);
+    const entries = await forensics.timeline(query.value);
     return reply.send(entries);
   });
 

@@ -116,7 +116,7 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 - [x] **Audit `summary()`** can return an internally inconsistent snapshot under
       concurrent appends (multiple independent reads). Take one consistent
       snapshot. (review: low)
-- [ ] **Server `limit` handling**: confirm non-positive `limit` semantics are
+- [x] **Server `limit` handling**: confirm non-positive `limit` semantics are
       consistent end-to-end (query layer treats `limit:0` as zero; ensure routes
       agree and are tested). (review: medium)
 
@@ -169,6 +169,14 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Completed the P2.5 server `limit` handling item. Audit,
+  forensics, and decision-memory read routes now validate `limit` at the HTTP
+  boundary as a non-negative integer, preserving `limit=0` as an explicit empty
+  result while rejecting negative, fractional, empty, and non-numeric limits with
+  `VALIDATION` / HTTP 400. Added route regression tests and documented the server
+  query contract. **Next:** choose the next small production-readiness slice:
+  append batching, deeper server auth scoping, or the next scaffold-module GA
+  hardening task.
 - **2026-06-18** — Fixed `Audit.summary()` snapshot consistency. Summary now
   reads the ledger once and verifies that same snapshot via
   `Ledger.verifyRecords()`, preserving signed-ledger integrity checks while
