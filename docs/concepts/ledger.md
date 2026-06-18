@@ -274,6 +274,11 @@ When a signer is configured, `append` signs every record's `hash`, stores the
 `HmacSigner.verify` uses a constant-time comparison (`timingSafeEqual`) to avoid
 leaking via timing, and requires a secret of at least 16 characters.
 
+`Ledger.verifyRecords(records)` applies that same verifier configuration,
+including the signer, to an already-read snapshot. Projections that need
+internally consistent aggregates can call `readAll()` once, aggregate those
+records, and verify the same snapshot instead of racing a second ledger read.
+
 The default deployment remains unsigned; external anchoring is available through
 the core `AnchorStore` port and should be backed by an independent system in
 production.

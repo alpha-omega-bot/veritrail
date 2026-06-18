@@ -1,6 +1,7 @@
 import {
   createInMemoryLedger,
   FixedClock,
+  HmacSigner,
   SequentialIdGenerator,
   noopLogger,
   isOk,
@@ -113,6 +114,58 @@ describe('AuditModule', () => {
       const head = await ledger.head();
       const summary = await audit.summary();
       expect(summary.head).toBe(head?.hash ?? null);
+    });
+
+    it('uses one ledger snapshot for counts and integrity head', async () => {
+      const { ctx, ledger } = makeContext();
+      const audit = createAuditModule(ctx);
+      const first = await appendNote(ledger, 'agent-a', 'one');
+
+      const originalReadAll = ledger.readAll.bind(ledger);
+      let appendedAfterSnapshot = false;
+      ledger.readAll = async (): Promise<LedgerRecord[]> => {
+        const snapshot = await originalReadAll();
+        if (!appendedAfterSnapshot) {
+          appendedAfterSnapshot = true;
+          await appendNote(ledger, 'agent-b', 'two');
+        }
+        return snapshot;
+      };
+
+      const summary = await audit.summary();
+
+      expect(summary.totalRecords).toBe(1);
+      expect(summary.head).toBe(first.hash);
+      expect(summary.countsByType).toEqual({ note: 1 });
+      expect(summary.actorCount).toBe(1);
+      expect(await ledger.count()).toBe(2);
+    });
+
+    it('verifies signed snapshots with the ledger signer', async () => {
+      const signer = new HmacSigner('a-sufficiently-long-secret');
+      const clock = new FixedClock(START);
+      const ledger = createInMemoryLedger({
+        clock,
+        ids: new SequentialIdGenerator(),
+        signer,
+      });
+      const ctx: ModuleContext = {
+        ledger,
+        clock,
+        ids: new SequentialIdGenerator(),
+        logger: noopLogger,
+      };
+      const audit = createAuditModule(ctx);
+      const record = await appendNote(ledger, 'agent-a', 'one');
+      const unsigned = { ...record };
+      delete (unsigned as { signature?: string }).signature;
+
+      ledger.readAll = async (): Promise<LedgerRecord[]> => [unsigned];
+
+      const summary = await audit.summary();
+
+      expect(summary.totalRecords).toBe(1);
+      expect(summary.integrityOk).toBe(false);
     });
   });
 

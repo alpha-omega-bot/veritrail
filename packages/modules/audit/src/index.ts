@@ -82,12 +82,14 @@ export class AuditModule implements VeritrailModule {
   }
 
   /**
-   * Aggregate the whole ledger into an {@link AuditSummary}. Reads every record
-   * once for the histogram/actor/time bounds and runs one integrity pass.
+   * Aggregate the whole ledger into an {@link AuditSummary}. Reads one record
+   * snapshot, then uses that same snapshot for the histogram/actor/time bounds
+   * and integrity report so concurrent appends cannot mix old counts with a
+   * newer chain head.
    */
   async summary(): Promise<AuditSummary> {
     const records = await this.#ctx.ledger.readAll();
-    const report = await this.#ctx.ledger.verify();
+    const report = this.#ctx.ledger.verifyRecords(records);
 
     const countsByType: Record<string, number> = {};
     const actors = new Set<string>();

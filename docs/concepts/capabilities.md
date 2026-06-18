@@ -64,7 +64,9 @@ function createAuditModule(ctx: ModuleContext): AuditModule;
 ```
 
 `AuditSummary` = `{ totalRecords, head, integrityOk, countsByType, actorCount,
-firstAt, lastAt }`, computed in a single pass plus one integrity pass.
+firstAt, lastAt }`, computed from one ledger snapshot that is also used for the
+integrity report, so the count and head cannot describe different moments under
+concurrent appends.
 `exportNdjson` has no trailing newline; each line round-trips via `JSON.parse`.
 
 ---

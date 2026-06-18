@@ -113,7 +113,7 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 - [x] **SDK client** throws raw `SyntaxError` on non-JSON HTTP bodies →
       wrap to `VeritrailError` (uniform-error contract). (review: medium) — partially
       addressed in bootstrap; verified with regression tests.
-- [ ] **Audit `summary()`** can return an internally inconsistent snapshot under
+- [x] **Audit `summary()`** can return an internally inconsistent snapshot under
       concurrent appends (multiple independent reads). Take one consistent
       snapshot. (review: low)
 - [ ] **Server `limit` handling**: confirm non-positive `limit` semantics are
@@ -169,6 +169,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Fixed `Audit.summary()` snapshot consistency. Summary now
+  reads the ledger once and verifies that same snapshot via
+  `Ledger.verifyRecords()`, preserving signed-ledger integrity checks while
+  preventing counts from describing an older moment than the reported head.
+  Added concurrent-append and signed-snapshot regression tests. **Next:** finish
+  the remaining P2.5 server `limit` handling item, then choose between append
+  batching or the next scaffold-module GA slice.
 - **2026-06-18** — Verified and documented the SDK HTTP client's uniform-error
   contract. Added regression tests proving non-JSON error and success responses
   are wrapped as `VeritrailError` instead of leaking raw `SyntaxError`, and added
