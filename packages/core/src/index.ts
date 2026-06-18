@@ -16,6 +16,9 @@ export * from './ledger/index.js';
 // External checkpoints for detecting wholesale ledger rewrites.
 export * from './anchoring/index.js';
 
+// Append-boundary event redaction.
+export * from './redaction/index.js';
+
 // Storage ports and adapters.
 export * from './storage/index.js';
 

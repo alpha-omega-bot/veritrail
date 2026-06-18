@@ -61,9 +61,11 @@ We use STRIDE as a checklist.
 
 ### Information disclosure
 
-- **I1 — Sensitive data in event payloads.** _Mitigation:_ keep secrets/PII out of
-  payloads in v0.1; field-level redaction/encryption at the append boundary is
-  Milestone 1. Protect the store with OS/storage controls. ⚠ **Residual risk.**
+- **I1 — Sensitive data in event payloads.** _Mitigation:_ configure
+  append-boundary redaction so targeted fields are removed before hashing,
+  signing, and persistence. Field-level encryption and retention with
+  cryptographic erasure remain Milestone 1 work. Protect the store with
+  OS/storage controls. ⚠ **Residual risk.**
 - **I2 — Over-broad reads via the API.** _Mitigation:_ authZ + query scoping
   (Milestone 1). ✔ route-level API-key roles now protect read APIs when auth is
   configured; tenant/project query scoping remains future platform work.

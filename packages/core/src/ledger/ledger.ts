@@ -5,6 +5,7 @@ import { systemClock, type Clock } from '../ports/clock.js';
 import { DefaultIdGenerator, type IdGenerator } from '../ports/id.js';
 import { noopLogger, type Logger } from '../ports/logger.js';
 import type { Signer } from '../ports/signer.js';
+import type { EventRedactor } from '../redaction/index.js';
 import type { EventQuery, EventStore } from '../storage/event-store.js';
 import type { JsonValue } from '../util/canonical.js';
 import { storageError, validationError, type VeritrailError } from '../util/errors.js';
@@ -35,6 +36,8 @@ export interface LedgerOptions {
   ids?: IdGenerator;
   /** Optional signer; when present, every record is signed and signatures are verified. */
   signer?: Signer;
+  /** Optional append-boundary event redactor. Runs before hashing/signing/persistence. */
+  redactor?: EventRedactor;
   logger?: Logger;
 }
 
@@ -57,6 +60,7 @@ export class Ledger implements LedgerReader, LedgerWriter {
   readonly #clock: Clock;
   readonly #ids: IdGenerator;
   readonly #signer: Signer | undefined;
+  readonly #redactor: EventRedactor | undefined;
   readonly #logger: Logger;
   readonly #mutex = new Mutex();
 
@@ -65,6 +69,7 @@ export class Ledger implements LedgerReader, LedgerWriter {
     this.#clock = options.clock ?? systemClock;
     this.#ids = options.ids ?? new DefaultIdGenerator(this.#clock);
     this.#signer = options.signer;
+    this.#redactor = options.redactor;
     this.#logger = options.logger ?? noopLogger;
   }
 
@@ -73,7 +78,24 @@ export class Ledger implements LedgerReader, LedgerWriter {
     if (!parsed.success) {
       return err(validationError('event failed validation', { issues: zodIssues(parsed.error) }));
     }
-    const event = parsed.data;
+    let event = parsed.data;
+    if (this.#redactor) {
+      try {
+        event = this.#redactor.redact(event);
+      } catch (cause) {
+        this.#logger.warn('ledger.append.redaction_failed', { type: event.type });
+        return err(storageError('failed to redact ledger event', cause));
+      }
+      const redacted = EventInputSchema.safeParse(event);
+      if (!redacted.success) {
+        return err(
+          validationError('redacted event failed validation', {
+            issues: zodIssues(redacted.error),
+          }),
+        );
+      }
+      event = redacted.data;
+    }
 
     return this.#mutex.run(async () => {
       const head = await this.#store.head();
