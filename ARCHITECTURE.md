@@ -102,13 +102,15 @@ interface LedgerRecord {
 `Ledger.append()`:
 
 1. Validates the event against `EventInputSchema` (returns `VALIDATION` on failure).
-2. Serializes appends through a **mutex** so the chain is always linear and gap-free.
-3. Reads the head, assigns `seq = head.seq + 1`, `prevHash = head.hash`.
-4. Stamps an authoritative `timestamp` from the injected `Clock`.
-5. Computes `hash` over the **canonical** JSON of the record (sorted keys, finite
+2. Optionally applies an append-boundary `EventRedactor`, then validates the
+   redacted event again before it can be committed.
+3. Serializes appends through a **mutex** so the chain is always linear and gap-free.
+4. Reads the head, assigns `seq = head.seq + 1`, `prevHash = head.hash`.
+5. Stamps an authoritative `timestamp` from the injected `Clock`.
+6. Computes `hash` over the **canonical** JSON of the record (sorted keys, finite
    numbers) so the hash is reproducible regardless of key order.
-6. Optionally signs the hash.
-7. Persists through the `EventStore`, which independently re-checks the
+7. Optionally signs the hash.
+8. Persists through the `EventStore`, which independently re-checks the
    append-only invariant (defense in depth).
 
 `Ledger.verify()` recomputes every hash and checks every link, returning an

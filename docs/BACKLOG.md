@@ -54,8 +54,9 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       administrative policy/budget changes are implemented. Remaining work:
       OIDC, tenant/project scoping, broader operator RBAC policy, and signed
       administrative action verification. (threat: S1)
-- [ ] **PII handling.** Field-level redaction/encryption hooks at the append
-      boundary; configurable retention with cryptographic erasure. (threat: I1)
+- [ ] **PII handling.** Append-boundary field redaction hook and path redactor
+      are implemented. Remaining work: field-level encryption hooks and
+      configurable retention with cryptographic erasure. (threat: I1)
 - [ ] **Backpressure & limits.** Request rate limiting, payload caps, and append
       batching/backpressure on the server. (threat: D1)
 - [ ] **`DefaultIdGenerator` hardening.** Guard against collisions when the clock
@@ -167,6 +168,14 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Added core append-boundary event redaction. `Ledger.append()`
+  now can apply an `EventRedactor` after initial validation and before
+  hashing/signing/persistence, then re-validates the redacted event. Added
+  `PathEventRedactor` with dot paths and `*` wildcards, tests for persisted
+  redaction, invalid redaction, and redactor failure, plus
+  `docs/runbooks/pii-redaction.md`. **Next:** continue P1 with encryption and
+  retention for PII, or backpressure/rate limits if keeping the next PR
+  server-focused.
 - **2026-06-17** — Started server authN/authZ. Added API-key authentication with
   `ingest`/`operator`/`admin` route roles, optional `buildServer({ auth })`
   configuration, `VERITRAIL_API_KEYS` parsing for the server binary, and

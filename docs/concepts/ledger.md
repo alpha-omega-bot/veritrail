@@ -70,6 +70,12 @@ chained fields; the caller never sets them:
 - `id` — minted via `ids.next('evt')`.
 - `hash` — `computeRecordHash(unhashed)`.
 
+If an `EventRedactor` is configured, `Ledger.append` applies it after the input
+event passes `EventInputSchema` and before any chained field is assigned. The
+redacted event is validated again, and only the redacted event is hashed, signed,
+and persisted. This keeps sensitive fields out of the committed record without
+mutating existing ledger history.
+
 Appends are serialized through a `Mutex`, so the chain is always linear and
 gap-free at write time. The persistence port (`EventStore`) independently
 re-checks the append-only invariant — a record may only land at `head.seq + 1`

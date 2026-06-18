@@ -124,20 +124,24 @@ only write path. It:
 1. **Validates** `input` against `EventInputSchema` (`safeParse`). On failure it
    returns `err(validationError('event failed validation', { issues }))` — no
    throw.
-2. **Serializes** the rest under a `Mutex`, so concurrent appends form one linear
+2. If configured, applies the append-boundary `EventRedactor`, then validates the
+   redacted event against `EventInputSchema` again. Invalid redaction returns
+   `VALIDATION`; redaction failures return `STORAGE`; neither path persists a
+   record.
+3. **Serializes** the rest under a `Mutex`, so concurrent appends form one linear
    chain.
-3. Reads the current `head` and computes the chained fields:
+4. Reads the current `head` and computes the chained fields:
    - `seq = head ? head.seq + 1 : 1`
    - `prevHash = head ? head.hash : GENESIS_HASH`
    - `timestamp = clock.now()` — the ledger's authoritative receipt time
      (distinct from the event's optional `occurredAt`)
    - `id = ids.next('evt')`
-4. Computes `hash = computeRecordHash({ seq, id, timestamp, event, prevHash })`.
-5. If a signer is configured, sets `signature = signer.sign(hash)` and
+5. Computes `hash = computeRecordHash({ seq, id, timestamp, event, prevHash })`.
+6. If a signer is configured, sets `signature = signer.sign(hash)` and
    `signerKeyId = signer.keyId`.
-6. Persists via `store.append(record)`; a sequencing/linkage violation surfaces
+7. Persists via `store.append(record)`; a sequencing/linkage violation surfaces
    as a `CONFLICT` result.
-7. Returns `ok(record)` with the full `LedgerRecord`.
+8. Returns `ok(record)` with the full `LedgerRecord`.
 
 So the caller controls only the _event_ (envelope + payload); `seq`, `timestamp`,
 `hash`, `prevHash`, and `id` are all assigned by the ledger. See

@@ -13,6 +13,7 @@ project over.
 | **Storage**   | `EventStore` port, `InMemoryEventStore`, `FileEventStore`                                            |
 | **Ports**     | `Clock`, `IdGenerator`, `Logger`, `Signer` (`HmacSigner`, `Ed25519Signer`)                           |
 | **Anchoring** | `AnchorStore`, `InMemoryAnchorStore`, helpers to publish and verify external ledger-head checkpoints |
+| **Redaction** | `EventRedactor`, `PathEventRedactor` append-boundary event redaction                                 |
 | **Utils**     | `Result`, `VeritrailError`, `canonicalize`, `sha256Hex`                                              |
 
 `FileEventStore` persists ledger records as append-only JSON Lines. Each append
@@ -58,5 +59,8 @@ console.log(report.ok, report.head); // true, <chain head hash>
 - **Anchoring**: a fully-rewritten _unsigned_ chain is internally consistent;
   publish periodic `AnchorRecord` checkpoints through an `AnchorStore` and verify
   them with `verifyLedgerAgainstLatestAnchor()` to detect wholesale rewrites.
+- **Append-boundary redaction**: provide an `EventRedactor` to transform a
+  validated event before hashing, signing, and persistence. `PathEventRedactor`
+  supports dot paths and `*` wildcards for common JSON payload fields.
 
 See [`docs/concepts/ledger.md`](../../docs/concepts/ledger.md) for the full model.

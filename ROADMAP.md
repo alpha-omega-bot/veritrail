@@ -45,8 +45,9 @@ Make the system durable, secure, and operable for a first real deployment.
 - 🚧 **AuthN/AuthZ** on the server: API-key auth, route roles, and ledger-recorded
   administrative policy/budget actions are implemented; OIDC and tenant/project
   scoping remain.
-- ⬜ **PII handling**: field-level redaction/encryption hooks at the append
-  boundary; configurable retention with cryptographic erasure.
+- 🚧 **PII handling**: append-boundary field redaction hook and path redactor are
+  implemented; encryption hooks and configurable retention with cryptographic
+  erasure remain.
 - ⬜ **Backpressure & batching** for high-throughput append paths.
 
 ## Milestone 2 — Complete the eight engines ⬜
