@@ -236,3 +236,127 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 });
+
+describe('Veritrail HTTP server limits', () => {
+  it('rejects request bodies above the configured cap', async () => {
+    const app = await buildServer({
+      logger: false,
+      limits: {
+        bodyLimitBytes: 80,
+        rateLimit: false,
+        maxInFlightWrites: false,
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: json,
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          payload: { text: 'this payload deliberately exceeds the small test body limit' },
+        }),
+      });
+
+      expect(res.statusCode).toBe(413);
+      expect(res.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'request body is too large' },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rate limits API requests by client key', async () => {
+    const app = await buildServer({
+      logger: false,
+      limits: {
+        rateLimit: { max: 1, windowMs: 60_000 },
+        maxInFlightWrites: false,
+      },
+      auth: {
+        apiKeys: [
+          {
+            id: 'operator',
+            actorId: 'operator-1',
+            secret: 'operator-secret-0001',
+            roles: ['operator'],
+          },
+        ],
+      },
+    });
+    try {
+      const headers = { authorization: 'Bearer operator-secret-0001' };
+      const first = await app.inject({ method: 'GET', url: '/api/audit/summary', headers });
+      expect(first.statusCode).toBe(200);
+
+      const second = await app.inject({ method: 'GET', url: '/api/audit/summary', headers });
+      expect(second.statusCode).toBe(429);
+      expect(second.headers['retry-after']).toBe('60');
+      expect(second.json()).toMatchObject({ error: { code: 'VALIDATION' } });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns 503 when write-route concurrency is saturated', async () => {
+    const ledger = createInMemoryLedger();
+    const originalAppend = ledger.append.bind(ledger);
+    let releaseFirstAppend: (() => void) | undefined;
+    let firstAppendStarted: (() => void) | undefined;
+    const firstAppendStartedPromise = new Promise<void>((resolve) => {
+      firstAppendStarted = resolve;
+    });
+    const releaseFirstAppendPromise = new Promise<void>((resolve) => {
+      releaseFirstAppend = resolve;
+    });
+    let appendCount = 0;
+    ledger.append = async (input: unknown) => {
+      appendCount += 1;
+      if (appendCount === 1) {
+        firstAppendStarted?.();
+        await releaseFirstAppendPromise;
+      }
+      return originalAppend(input);
+    };
+
+    const app = await buildServer({
+      logger: false,
+      ledger,
+      limits: {
+        rateLimit: false,
+        maxInFlightWrites: 1,
+      },
+    });
+    try {
+      const first = app.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: json,
+        payload: body({ type: 'note', actorId: 'agent-1', payload: { text: 'first' } }),
+      });
+      await firstAppendStartedPromise;
+
+      const second = await app.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: json,
+        payload: body({ type: 'note', actorId: 'agent-1', payload: { text: 'second' } }),
+      });
+      expect(second.statusCode).toBe(503);
+      expect(second.headers['retry-after']).toBe('1');
+      expect(second.json()).toMatchObject({
+        error: { code: 'STORAGE', message: 'server write capacity is saturated' },
+      });
+
+      releaseFirstAppend?.();
+      const firstResult = await first;
+      expect(firstResult.statusCode).toBe(201);
+      expect(await ledger.count()).toBe(1);
+    } finally {
+      releaseFirstAppend?.();
+      await app.close();
+    }
+  });
+});

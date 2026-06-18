@@ -73,7 +73,8 @@ We use STRIDE as a checklist.
 ### Denial of service
 
 - **D1 — Flood appends / huge payloads.** _Mitigation:_ schema bounds on string
-  lengths; planned rate limiting, payload caps, and backpressure (Milestone 1).
+  lengths, server request body caps, fixed-window API rate limits, and write-route
+  in-flight backpressure. Append batching remains future throughput work.
 - **D2 — Unbounded spend by an agent.** _Mitigation:_ Spend Guard hard-stops at
   budget limits by default. ✔ implemented.
 
@@ -86,7 +87,7 @@ We use STRIDE as a checklist.
 
 ## Abuse cases specific to agents
 
-- **Runaway loops** → Spend Guard budgets + (planned) rate limits bound blast radius.
+- **Runaway loops** → Spend Guard budgets + server rate limits bound blast radius.
 - **Prompt-injected "delete the logs"** → tamper-evidence makes deletion detectable;
   with signing, an injected agent cannot forge a clean chain.
 - **Silent vendor degradation** → Vendor Risk surfaces signals and scores before a

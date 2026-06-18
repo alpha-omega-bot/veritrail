@@ -57,8 +57,9 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
-- [ ] **Backpressure & limits.** Request rate limiting, payload caps, and append
-      batching/backpressure on the server. (threat: D1)
+- [ ] **Backpressure & limits.** Server request body caps, fixed-window API rate
+      limiting, and write-route in-flight backpressure are implemented. Remaining
+      work: append batching for high-throughput ingest. (threat: D1)
 - [ ] **`DefaultIdGenerator` hardening.** Guard against collisions when the clock
       moves backward and on >65536 ids/ms. (review: core/low)
 
@@ -168,6 +169,12 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Added server defensive limits. `buildServer({ limits })` now
+  configures a Fastify body cap, fixed-window API rate limits keyed by API key or
+  IP, and write-route in-flight backpressure that returns `503` before append-like
+  handlers pile up. The binary exposes env knobs for body bytes, rate window/max,
+  and max in-flight writes. **Next:** finish the remaining P1 append batching
+  work, then revisit the remaining server auth depth.
 - **2026-06-18** — Added core append-boundary event redaction. `Ledger.append()`
   now can apply an `EventRedactor` after initial validation and before
   hashing/signing/persistence, then re-validates the redacted event. Added

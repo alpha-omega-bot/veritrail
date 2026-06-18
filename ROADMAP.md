@@ -48,7 +48,9 @@ Make the system durable, secure, and operable for a first real deployment.
 - 🚧 **PII handling**: append-boundary field redaction hook and path redactor are
   implemented; encryption hooks and configurable retention with cryptographic
   erasure remain.
-- ⬜ **Backpressure & batching** for high-throughput append paths.
+- 🚧 **Backpressure & batching**: server request body caps, fixed-window rate
+  limits, and write-route in-flight backpressure are implemented; append batching
+  remains.
 
 ## Milestone 2 — Complete the eight engines ⬜
 
