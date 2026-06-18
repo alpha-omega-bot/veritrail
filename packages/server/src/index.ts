@@ -13,6 +13,15 @@ export {
   type ServerRole,
 } from './auth.js';
 export {
+  DEFAULT_BODY_LIMIT_BYTES,
+  DEFAULT_MAX_IN_FLIGHT_WRITES,
+  DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW_MS,
+  normalizeLimits,
+  type RateLimitConfig,
+  type ServerLimitsConfig,
+} from './limits.js';
+export {
   createPlatform,
   developmentLogger,
   type Platform,

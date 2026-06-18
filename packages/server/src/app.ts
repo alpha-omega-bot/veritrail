@@ -27,6 +27,15 @@ import {
   type ServerRole,
 } from './auth.js';
 import { asNumber, asString, replyError, replyResult } from './http.js';
+import {
+  createRateLimitPreHandler,
+  normalizeLimits,
+  registerServerLimits,
+  type RateLimitConfig,
+  type ServerPreHandler,
+  writeRouteConfig,
+  type ServerLimitsConfig,
+} from './limits.js';
 import { createPlatform, type Platform } from './platform.js';
 
 export interface BuildServerOptions {
@@ -46,6 +55,8 @@ export interface BuildServerOptions {
    * unauthenticated behavior for local development and tests.
    */
   auth?: AuthConfig;
+  /** Request size, rate, and write backpressure controls. */
+  limits?: ServerLimitsConfig;
 }
 
 const startedAt = Date.now();
@@ -92,12 +103,14 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
     options.permissions !== undefined ? { permissions: options.permissions } : {},
   );
 
-  const app = Fastify({ logger: options.logger ?? false });
+  const limits = normalizeLimits(options.limits);
+  const app = Fastify({ logger: options.logger ?? false, bodyLimit: limits.bodyLimitBytes });
+  registerServerLimits(app, limits);
   if (options.cors !== false) {
     await app.register(cors, { origin: true });
   }
   const authenticator = options.auth ? new ApiKeyAuthenticator(options.auth) : undefined;
-  registerRoutes(app, platform, authenticator);
+  registerRoutes(app, platform, authenticator, limits.rateLimit);
   return app;
 }
 
@@ -105,71 +118,81 @@ function registerRoutes(
   app: FastifyInstance,
   platform: Platform,
   authenticator: ApiKeyAuthenticator | undefined,
+  rateLimitConfig: RateLimitConfig | false,
 ): void {
   const { ledger, audit, permissions, spendGuard, rollback, forensics, evidence } = platform;
   const { decisionMemory, vendorRisk } = platform;
   const auth = routeAuth(authenticator);
+  const rateLimit = createRateLimitPreHandler(rateLimitConfig);
+  const publicRoute = rateLimit ? { preHandler: [rateLimit] } : {};
+  const preHandlers = (roles: readonly ServerRole[]): ServerPreHandler[] => [
+    auth(roles),
+    ...(rateLimit ? [rateLimit] : []),
+  ];
+  const readRoute = (roles: readonly ServerRole[]) => ({ preHandler: preHandlers(roles) });
+  const writeRoute = (roles: readonly ServerRole[]) => ({
+    preHandler: preHandlers(roles),
+    config: writeRouteConfig(),
+  });
 
   // ---- meta -------------------------------------------------------------
-  app.get('/api', async () => ({
+  app.get('/api', publicRoute, async () => ({
     name: 'veritrail-server',
     version: '0.1.0',
     capabilities: CAPABILITIES,
   }));
 
-  app.get('/api/health', async () => ({
+  app.get('/api/health', publicRoute, async () => ({
     status: 'ok',
     name: 'veritrail-server',
     version: '0.1.0',
     uptimeMs: Date.now() - startedAt,
   }));
 
-  app.get('/api/ready', async (_request, reply) => {
+  app.get('/api/ready', publicRoute, async (_request, reply) => {
     const count = await ledger.count();
     return reply.send({ ready: true, records: count });
   });
 
   // ---- raw ledger ingest ------------------------------------------------
-  app.post('/api/events', { preHandler: auth(['ingest']) }, async (request, reply) => {
+  app.post('/api/events', writeRoute(['ingest']), async (request, reply) => {
     const result = await ledger.append(request.body);
     if (!result.ok) return replyError(reply, result.error);
     return reply.code(201).send({ record: result.value });
   });
 
   // ---- audit ------------------------------------------------------------
-  app.get('/api/audit/events', { preHandler: auth(['operator']) }, async (request, reply) => {
+  app.get('/api/audit/events', readRoute(['operator']), async (request, reply) => {
     const records = await audit.search(eventQueryFrom(request.query as Record<string, unknown>));
     return reply.send(records);
   });
 
-  app.get('/api/audit/events/:seq', { preHandler: auth(['operator']) }, async (request, reply) => {
+  app.get('/api/audit/events/:seq', readRoute(['operator']), async (request, reply) => {
     const seq = asNumber((request.params as Record<string, unknown>)['seq']);
     if (seq === undefined) return replyError(reply, validationError('seq must be a number'));
     const record = await audit.get(seq);
     return record ? reply.send(record) : reply.code(404).send({ error: { code: 'NOT_FOUND' } });
   });
 
-  app.get('/api/audit/summary', { preHandler: auth(['operator']) }, async (_request, reply) =>
+  app.get('/api/audit/summary', readRoute(['operator']), async (_request, reply) =>
     reply.send(await audit.summary()),
   );
 
-  app.get('/api/audit/verify', { preHandler: auth(['operator']) }, async (_request, reply) =>
+  app.get('/api/audit/verify', readRoute(['operator']), async (_request, reply) =>
     reply.send(await audit.verify()),
   );
 
-  app.get('/api/audit/export', { preHandler: auth(['operator']) }, async (_request, reply) => {
+  app.get('/api/audit/export', readRoute(['operator']), async (_request, reply) => {
     const ndjson = await audit.exportNdjson();
     return reply.header('content-type', 'application/x-ndjson').send(ndjson);
   });
 
   // ---- permissions ------------------------------------------------------
-  app.get(
-    '/api/permissions/policies',
-    { preHandler: auth(['operator']) },
-    async (_request, reply) => reply.send(permissions.listPolicies()),
+  app.get('/api/permissions/policies', readRoute(['operator']), async (_request, reply) =>
+    reply.send(permissions.listPolicies()),
   );
 
-  app.post('/api/permissions/policies', { preHandler: auth(['admin']) }, async (request, reply) => {
+  app.post('/api/permissions/policies', writeRoute(['admin']), async (request, reply) => {
     const candidate = withGeneratedId(request.body, 'pol', platform);
     const parsed = PolicySchema.safeParse(candidate);
     if (!parsed.success) return replyError(reply, validationError('invalid policy'));
@@ -187,48 +210,40 @@ function registerRoutes(
     return replyResult(reply, result);
   });
 
-  app.delete(
-    '/api/permissions/policies/:id',
-    { preHandler: auth(['admin']) },
-    async (request, reply) => {
-      const id = String((request.params as Record<string, unknown>)['id']);
-      const existing = permissions.listPolicies().find((policy) => policy.id === id);
-      if (!existing) return reply.code(404).send({ removed: false });
-      const audit = await recordAdminAction(platform, request.principal, {
-        action: 'policy.removed',
-        targetType: 'policy',
-        targetId: id,
-      });
-      if (!audit.ok) {
-        return replyError(reply, audit.error);
-      }
-      permissions.removePolicy(id);
-      return reply.send({ removed: true });
-    },
-  );
+  app.delete('/api/permissions/policies/:id', writeRoute(['admin']), async (request, reply) => {
+    const id = String((request.params as Record<string, unknown>)['id']);
+    const existing = permissions.listPolicies().find((policy) => policy.id === id);
+    if (!existing) return reply.code(404).send({ removed: false });
+    const audit = await recordAdminAction(platform, request.principal, {
+      action: 'policy.removed',
+      targetType: 'policy',
+      targetId: id,
+    });
+    if (!audit.ok) {
+      return replyError(reply, audit.error);
+    }
+    permissions.removePolicy(id);
+    return reply.send({ removed: true });
+  });
 
-  app.post(
-    '/api/permissions/evaluate',
-    { preHandler: auth(['operator']) },
-    async (request, reply) => {
-      const parsed = parseActionWithActor(request.body);
-      if (!parsed.ok) return replyError(reply, parsed.error);
-      return reply.send(permissions.evaluate(parsed.action, parsed.opts));
-    },
-  );
+  app.post('/api/permissions/evaluate', readRoute(['operator']), async (request, reply) => {
+    const parsed = parseActionWithActor(request.body);
+    if (!parsed.ok) return replyError(reply, parsed.error);
+    return reply.send(permissions.evaluate(parsed.action, parsed.opts));
+  });
 
-  app.post('/api/permissions/enforce', { preHandler: auth(['ingest']) }, async (request, reply) => {
+  app.post('/api/permissions/enforce', writeRoute(['ingest']), async (request, reply) => {
     const parsed = parseActionWithActor(request.body);
     if (!parsed.ok) return replyError(reply, parsed.error);
     return replyResult(reply, await permissions.enforce(parsed.action, parsed.opts));
   });
 
   // ---- spend guard ------------------------------------------------------
-  app.get('/api/spend/budgets', { preHandler: auth(['operator']) }, async (_request, reply) =>
+  app.get('/api/spend/budgets', readRoute(['operator']), async (_request, reply) =>
     reply.send(spendGuard.listBudgets()),
   );
 
-  app.post('/api/spend/budgets', { preHandler: auth(['admin']) }, async (request, reply) => {
+  app.post('/api/spend/budgets', writeRoute(['admin']), async (request, reply) => {
     const candidate = withGeneratedId(request.body, 'bud', platform);
     const parsed = BudgetSchema.safeParse(candidate);
     if (!parsed.success) return replyError(reply, validationError('invalid budget'));
@@ -250,11 +265,11 @@ function registerRoutes(
     return replyResult(reply, result);
   });
 
-  app.get('/api/spend/status', { preHandler: auth(['operator']) }, async (_request, reply) =>
+  app.get('/api/spend/status', readRoute(['operator']), async (_request, reply) =>
     reply.send(await spendGuard.status()),
   );
 
-  app.post('/api/spend/charge', { preHandler: auth(['ingest']) }, async (request, reply) => {
+  app.post('/api/spend/charge', writeRoute(['ingest']), async (request, reply) => {
     const parsed = AuthorizeInputSchema.safeParse(request.body);
     if (!parsed.success) return replyError(reply, validationError('invalid charge input'));
     const { actorId, amount, labels, actionId } = parsed.data;
@@ -270,11 +285,11 @@ function registerRoutes(
   });
 
   // ---- decision memory --------------------------------------------------
-  app.post('/api/decisions', { preHandler: auth(['ingest']) }, async (request, reply) =>
+  app.post('/api/decisions', writeRoute(['ingest']), async (request, reply) =>
     replyResult(reply, await decisionMemory.record(request.body)),
   );
 
-  app.get('/api/decisions', { preHandler: auth(['operator']) }, async (request, reply) => {
+  app.get('/api/decisions', readRoute(['operator']), async (request, reply) => {
     const q = request.query as Record<string, unknown>;
     const opts: { actorId?: string; limit?: number } = {};
     const actorId = asString(q['actorId']);
@@ -284,7 +299,7 @@ function registerRoutes(
     return reply.send(await decisionMemory.list(opts));
   });
 
-  app.get('/api/decisions/recall', { preHandler: auth(['operator']) }, async (request, reply) => {
+  app.get('/api/decisions/recall', readRoute(['operator']), async (request, reply) => {
     const q = request.query as Record<string, unknown>;
     const query: { text?: string; actorId?: string; limit?: number } = {};
     const text = asString(q['text']);
@@ -297,69 +312,57 @@ function registerRoutes(
   });
 
   // ---- evidence ---------------------------------------------------------
-  app.post('/api/evidence', { preHandler: auth(['ingest']) }, async (request, reply) =>
+  app.post('/api/evidence', writeRoute(['ingest']), async (request, reply) =>
     replyResult(reply, await evidence.attach(request.body)),
   );
 
-  app.get('/api/evidence', { preHandler: auth(['operator']) }, async (_request, reply) =>
+  app.get('/api/evidence', readRoute(['operator']), async (_request, reply) =>
     reply.send(await evidence.list()),
   );
 
-  app.get('/api/evidence/:id/trace', { preHandler: auth(['operator']) }, async (request, reply) => {
+  app.get('/api/evidence/:id/trace', readRoute(['operator']), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
     return replyResult(reply, await evidence.trace(id));
   });
 
-  app.post(
-    '/api/evidence/:id/verify',
-    { preHandler: auth(['operator']) },
-    async (request, reply) => {
-      const id = String((request.params as Record<string, unknown>)['id']);
-      const content = (request.body as { content?: unknown })?.content;
-      if (typeof content !== 'string') {
-        return replyError(reply, validationError('content (string) is required'));
-      }
-      return replyResult(reply, await evidence.verifyContent(id, content));
-    },
-  );
+  app.post('/api/evidence/:id/verify', readRoute(['operator']), async (request, reply) => {
+    const id = String((request.params as Record<string, unknown>)['id']);
+    const content = (request.body as { content?: unknown })?.content;
+    if (typeof content !== 'string') {
+      return replyError(reply, validationError('content (string) is required'));
+    }
+    return replyResult(reply, await evidence.verifyContent(id, content));
+  });
 
   // ---- vendor risk ------------------------------------------------------
-  app.post('/api/vendors', { preHandler: auth(['admin']) }, async (request, reply) =>
+  app.post('/api/vendors', writeRoute(['admin']), async (request, reply) =>
     replyResult(reply, await vendorRisk.register(request.body)),
   );
 
-  app.get('/api/vendors', { preHandler: auth(['operator']) }, async (_request, reply) =>
+  app.get('/api/vendors', readRoute(['operator']), async (_request, reply) =>
     reply.send(await vendorRisk.listVendors()),
   );
 
-  app.post('/api/vendors/signals', { preHandler: auth(['ingest']) }, async (request, reply) =>
+  app.post('/api/vendors/signals', writeRoute(['ingest']), async (request, reply) =>
     replyResult(reply, await vendorRisk.recordSignal(request.body)),
   );
 
-  app.get(
-    '/api/vendors/:id/signals',
-    { preHandler: auth(['operator']) },
-    async (request, reply) => {
-      const id = String((request.params as Record<string, unknown>)['id']);
-      return reply.send(await vendorRisk.signalsFor(id));
-    },
-  );
+  app.get('/api/vendors/:id/signals', readRoute(['operator']), async (request, reply) => {
+    const id = String((request.params as Record<string, unknown>)['id']);
+    return reply.send(await vendorRisk.signalsFor(id));
+  });
 
-  app.get('/api/vendor-risk/assess', { preHandler: auth(['operator']) }, async (_request, reply) =>
+  app.get('/api/vendor-risk/assess', readRoute(['operator']), async (_request, reply) =>
     reply.send(await vendorRisk.assess()),
   );
 
-  app.get(
-    '/api/vendor-risk/:id/score',
-    { preHandler: auth(['operator']) },
-    async (request, reply) => {
-      const id = String((request.params as Record<string, unknown>)['id']);
-      return replyResult(reply, await vendorRisk.score(id));
-    },
-  );
+  app.get('/api/vendor-risk/:id/score', readRoute(['operator']), async (request, reply) => {
+    const id = String((request.params as Record<string, unknown>)['id']);
+    return replyResult(reply, await vendorRisk.score(id));
+  });
 
   // ---- forensics --------------------------------------------------------
-  app.get('/api/forensics/incident', { preHandler: auth(['operator']) }, async (request, reply) => {
+  app.get('/api/forensics/incident', readRoute(['operator']), async (request, reply) => {
     const correlationId = asString((request.query as Record<string, unknown>)['correlationId']);
     if (correlationId === undefined) {
       return replyError(reply, validationError('correlationId is required'));
@@ -367,26 +370,22 @@ function registerRoutes(
     return reply.send(await forensics.incident(correlationId));
   });
 
-  app.get('/api/forensics/timeline', { preHandler: auth(['operator']) }, async (request, reply) => {
+  app.get('/api/forensics/timeline', readRoute(['operator']), async (request, reply) => {
     const entries = await forensics.timeline(
       eventQueryFrom(request.query as Record<string, unknown>),
     );
     return reply.send(entries);
   });
 
-  app.get(
-    '/api/forensics/cause/:causationId',
-    { preHandler: auth(['operator']) },
-    async (request, reply) => {
-      const id = String((request.params as Record<string, unknown>)['causationId']);
-      return reply.send(await forensics.causeChain(id));
-    },
-  );
+  app.get('/api/forensics/cause/:causationId', readRoute(['operator']), async (request, reply) => {
+    const id = String((request.params as Record<string, unknown>)['causationId']);
+    return reply.send(await forensics.causeChain(id));
+  });
 
   // ---- rollback ---------------------------------------------------------
   app.post(
     '/api/rollback/plan/action/:actionId',
-    { preHandler: auth(['operator']) },
+    readRoute(['operator']),
     async (request, reply) => {
       const id = String((request.params as Record<string, unknown>)['actionId']);
       return replyResult(reply, await rollback.planForAction(id));
@@ -395,14 +394,14 @@ function registerRoutes(
 
   app.get(
     '/api/rollback/plan/correlation/:correlationId',
-    { preHandler: auth(['operator']) },
+    readRoute(['operator']),
     async (request, reply) => {
       const id = String((request.params as Record<string, unknown>)['correlationId']);
       return reply.send(await rollback.planForCorrelation(id));
     },
   );
 
-  app.post('/api/rollback/execute', { preHandler: auth(['operator']) }, async (request, reply) => {
+  app.post('/api/rollback/execute', writeRoute(['operator']), async (request, reply) => {
     const plan = (request.body as { plan?: unknown })?.plan;
     if (plan === null || typeof plan !== 'object') {
       return replyError(reply, validationError('plan is required'));

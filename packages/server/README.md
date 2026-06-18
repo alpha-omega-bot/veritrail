@@ -46,3 +46,30 @@ ledger for operator audit.
 
 The `veritrail-server` binary accepts `VERITRAIL_API_KEYS` as a comma-separated
 list of `id:actorId:secret:role1|role2` entries.
+
+## Limits
+
+`buildServer()` enables defensive request limits by default:
+
+- request body cap: 1 MiB
+- fixed-window API rate limit: 600 requests per minute per API key, or per IP
+  when unauthenticated
+- write-route backpressure: 32 concurrent write handlers
+
+```ts
+const app = await buildServer({
+  limits: {
+    bodyLimitBytes: 512 * 1024,
+    rateLimit: { max: 120, windowMs: 60_000 },
+    maxInFlightWrites: 16,
+  },
+});
+```
+
+Set `rateLimit: false` or `maxInFlightWrites: false` only for trusted tests or
+when an upstream gateway provides equivalent controls. The binary accepts:
+
+- `VERITRAIL_BODY_LIMIT_BYTES`
+- `VERITRAIL_RATE_LIMIT_MAX` (`0` disables server-side rate limiting)
+- `VERITRAIL_RATE_LIMIT_WINDOW_MS`
+- `VERITRAIL_MAX_IN_FLIGHT_WRITES` (`0` disables write backpressure)
