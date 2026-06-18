@@ -8,11 +8,15 @@ import {
   HmacSigner,
   MoneySchema,
   PolicySchema,
+  asJson,
   createFileLedger,
   createInMemoryLedger,
   isEventType,
   validationError,
   type Actor,
+  type Clock,
+  type JsonObject,
+  type IdGenerator,
   type EventInput,
   type EventQuery,
   type LedgerRecord,
@@ -25,7 +29,9 @@ import { z, type ZodError } from 'zod';
 
 import {
   ApiKeyAuthenticator,
+  adminActionSignatureDetails,
   parseAuthHeader,
+  type AdminActionSignatureReceipt,
   type ApiKeyPrincipal,
   type AuthConfig,
   type RouteAccess,
@@ -50,6 +56,10 @@ export interface BuildServerOptions {
   ledgerFile?: string;
   /** Enable HMAC signing of ledger records with this secret. */
   signerSecret?: string;
+  /** Clock for platform-level request checks and module context. */
+  clock?: Clock;
+  /** Id generator for module-created policy/budget/evidence/etc ids. */
+  ids?: IdGenerator;
   /** Fastify logger (default off). */
   logger?: boolean;
   /** Enable permissive CORS (default true; restrict in production). */
@@ -141,16 +151,21 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   let ledger = options.ledger;
   if (!ledger) {
     const signer = options.signerSecret ? new HmacSigner(options.signerSecret) : undefined;
-    const ledgerOpts = signer ? { signer } : {};
+    const ledgerOpts = {
+      ...(signer !== undefined ? { signer } : {}),
+      ...(options.clock !== undefined ? { clock: options.clock } : {}),
+      ...(options.ids !== undefined ? { ids: options.ids } : {}),
+    };
     ledger = options.ledgerFile
       ? await createFileLedger(options.ledgerFile, ledgerOpts)
       : createInMemoryLedger(ledgerOpts);
   }
 
-  const platform = createPlatform(
-    ledger,
-    options.permissions !== undefined ? { permissions: options.permissions } : {},
-  );
+  const platform = createPlatform(ledger, {
+    ...(options.clock !== undefined ? { clock: options.clock } : {}),
+    ...(options.ids !== undefined ? { ids: options.ids } : {}),
+    ...(options.permissions !== undefined ? { permissions: options.permissions } : {}),
+  });
 
   const limits = normalizeLimits(options.limits);
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: limits.bodyLimitBytes });
@@ -268,12 +283,15 @@ function registerRoutes(
     const candidate = withGeneratedId(request.body, 'pol', platform);
     const parsed = PolicySchema.safeParse(candidate);
     if (!parsed.success) return replyError(reply, validationError('invalid policy'));
+    const signature = verifyAdminActionRequest(authenticator, platform, request);
+    if (!signature.ok) return replyError(reply, signature.error);
 
     const audit = await recordAdminAction(platform, request.principal, {
       action: 'policy.upserted',
       targetType: 'policy',
       targetId: parsed.data.id,
       details: { effect: parsed.data.effect, name: parsed.data.name },
+      ...(signature.value !== undefined ? { signature: signature.value } : {}),
     });
     if (!audit.ok) {
       return replyError(reply, audit.error);
@@ -286,10 +304,13 @@ function registerRoutes(
     const id = String((request.params as Record<string, unknown>)['id']);
     const existing = permissions.listPolicies().find((policy) => policy.id === id);
     if (!existing) return reply.code(404).send({ removed: false });
+    const signature = verifyAdminActionRequest(authenticator, platform, request);
+    if (!signature.ok) return replyError(reply, signature.error);
     const audit = await recordAdminAction(platform, request.principal, {
       action: 'policy.removed',
       targetType: 'policy',
       targetId: id,
+      ...(signature.value !== undefined ? { signature: signature.value } : {}),
     });
     if (!audit.ok) {
       return replyError(reply, audit.error);
@@ -319,6 +340,8 @@ function registerRoutes(
     const candidate = withGeneratedId(request.body, 'bud', platform);
     const parsed = BudgetSchema.safeParse(candidate);
     if (!parsed.success) return replyError(reply, validationError('invalid budget'));
+    const signature = verifyAdminActionRequest(authenticator, platform, request);
+    if (!signature.ok) return replyError(reply, signature.error);
 
     const audit = await recordAdminAction(platform, request.principal, {
       action: 'budget.upserted',
@@ -329,6 +352,7 @@ function registerRoutes(
         scope: parsed.data.scope,
         limit: parsed.data.limit,
       },
+      ...(signature.value !== undefined ? { signature: signature.value } : {}),
     });
     if (!audit.ok) {
       return replyError(reply, audit.error);
@@ -499,7 +523,12 @@ interface AdminActionInput {
   readonly targetType: string;
   readonly targetId?: string;
   readonly details?: Record<string, unknown>;
+  readonly signature?: AdminActionSignatureReceipt;
 }
+
+type AdminActionSignatureParseResult =
+  | { ok: true; value: AdminActionSignatureReceipt | undefined }
+  | { ok: false; error: ReturnType<typeof validationError> };
 
 function routeAuth(authenticator: ApiKeyAuthenticator | undefined) {
   return (access: RouteAccess | readonly ServerRole[]) =>
@@ -586,12 +615,38 @@ function zodIssues(error: ZodError): JsonValue {
   }));
 }
 
+function verifyAdminActionRequest(
+  authenticator: ApiKeyAuthenticator | undefined,
+  platform: Platform,
+  request: FastifyRequest,
+): AdminActionSignatureParseResult {
+  if (authenticator === undefined || !authenticator.adminActionSigningRequired) {
+    return { ok: true, value: undefined };
+  }
+  const result = authenticator.verifyAdminActionSignature({
+    method: request.method,
+    path: request.url,
+    body: request.body ?? null,
+    timestamp: headerValue(request.headers['x-veritrail-admin-timestamp']),
+    nonce: headerValue(request.headers['x-veritrail-admin-nonce']),
+    keyId: headerValue(request.headers['x-veritrail-admin-key-id']),
+    signature: headerValue(request.headers['x-veritrail-admin-signature']),
+    now: platform.ctx.clock.now(),
+  });
+  return result.ok ? { ok: true, value: result.receipt } : { ok: false, error: result.error };
+}
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 async function recordAdminAction(
   platform: Platform,
   principal: ApiKeyPrincipal | undefined,
   input: AdminActionInput,
 ): ReturnType<Platform['ledger']['append']> {
   const actorId = principal?.actorId ?? 'server';
+  const details = adminActionDetails(input);
   return platform.ledger.append({
     type: 'admin.action',
     actorId,
@@ -599,9 +654,19 @@ async function recordAdminAction(
       action: input.action,
       targetType: input.targetType,
       ...(input.targetId !== undefined ? { targetId: input.targetId } : {}),
-      ...(input.details !== undefined ? { details: input.details } : {}),
+      ...(details !== undefined ? { details } : {}),
     },
   });
+}
+
+function adminActionDetails(input: AdminActionInput): JsonObject | undefined {
+  const details = {
+    ...(input.details ?? {}),
+    ...(input.signature !== undefined
+      ? { signature: adminActionSignatureDetails(input.signature) }
+      : {}),
+  };
+  return Object.keys(details).length === 0 ? undefined : (asJson(details) as JsonObject);
 }
 
 function withGeneratedId(input: unknown, prefix: string, platform: Platform): unknown {

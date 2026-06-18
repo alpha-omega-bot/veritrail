@@ -6,8 +6,12 @@
 export { buildServer, type BuildServerOptions } from './app.js';
 export {
   ApiKeyAuthenticator,
+  adminActionSignatureDetails,
   parseApiKeyEntries,
   parseAuthHeader,
+  signAdminAction,
+  type AdminActionSignatureReceipt,
+  type AdminActionSigningConfig,
   type ApiKeyConfig,
   type ApiKeyPrincipal,
   type AuthConfig,

@@ -1,5 +1,5 @@
 import { buildServer, type BuildServerOptions } from './app.js';
-import { parseApiKeyEntries } from './auth.js';
+import { parseApiKeyEntries, type AdminActionSigningConfig } from './auth.js';
 import {
   DEFAULT_RATE_LIMIT_MAX,
   DEFAULT_RATE_LIMIT_WINDOW_MS,
@@ -15,7 +15,15 @@ if (ledgerFile) options.ledgerFile = ledgerFile;
 const signerSecret = process.env['VERITRAIL_SIGNER_SECRET'];
 if (signerSecret) options.signerSecret = signerSecret;
 const apiKeys = parseApiKeyEntries(process.env['VERITRAIL_API_KEYS']);
-if (apiKeys.length > 0) options.auth = { apiKeys };
+const adminActionSigning = adminActionSigningFromEnv();
+if (apiKeys.length > 0) {
+  options.auth = {
+    apiKeys,
+    ...(adminActionSigning !== undefined ? { adminActionSigning } : {}),
+  };
+} else if (adminActionSigning !== undefined) {
+  throw new Error('VERITRAIL_ADMIN_ACTION_SIGNING_SECRET requires VERITRAIL_API_KEYS');
+}
 options.limits = limitsFromEnv();
 
 const app = await buildServer(options);
@@ -35,6 +43,18 @@ function limitsFromEnv(): ServerLimitsConfig {
     ...(bodyLimitBytes !== undefined ? { bodyLimitBytes } : {}),
     ...(rateLimit !== undefined ? { rateLimit } : {}),
     ...(maxInFlightWrites !== undefined ? { maxInFlightWrites } : {}),
+  };
+}
+
+function adminActionSigningFromEnv(): AdminActionSigningConfig | undefined {
+  const secret = process.env['VERITRAIL_ADMIN_ACTION_SIGNING_SECRET'];
+  if (!secret) return undefined;
+  const keyId = process.env['VERITRAIL_ADMIN_ACTION_SIGNING_KEY_ID'];
+  const maxSkewMs = parsePositiveInt(process.env['VERITRAIL_ADMIN_ACTION_SIGNING_MAX_SKEW_MS']);
+  return {
+    secret,
+    ...(keyId !== undefined && keyId.length > 0 ? { keyId } : {}),
+    ...(maxSkewMs !== undefined ? { maxSkewMs } : {}),
   };
 }
 
