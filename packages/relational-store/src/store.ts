@@ -1,4 +1,4 @@
-import { asJson, canonicalize, GENESIS_HASH, type LedgerRecord } from '@veritrail/core';
+import { asJson, canonicalize, GENESIS_HASH, applyQuery, type LedgerRecord } from '@veritrail/core';
 import type { EventQuery, EventStore } from '@veritrail/core';
 import {
   conflictError,
@@ -177,12 +177,16 @@ export class RelationalEventStore implements EventStore {
     }
 
     const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
-    const limit = query.limit === undefined ? '' : `LIMIT ${add(Math.max(0, query.limit))}`;
+    const limit =
+      query.limit === undefined || query.labels !== undefined
+        ? ''
+        : `LIMIT ${add(Math.max(0, query.limit))}`;
     const result = await this.#db.execute({
       text: `SELECT record_json FROM veritrail_events ${where} ORDER BY seq ASC ${limit}`,
       values,
     });
-    return orderBySeq(result.rows);
+    const records = orderBySeq(result.rows);
+    return query.labels === undefined ? records : applyQuery(records, query);
   }
 
   async count(): Promise<number> {

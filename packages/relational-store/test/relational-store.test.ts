@@ -166,6 +166,36 @@ describe('RelationalEventStore', () => {
     expect((await ledger.verify()).ok).toBe(true);
   });
 
+  it('applies label filters before limit', async () => {
+    const db = new FakeSqlDatabase();
+    const ledger = await createLedger(db);
+
+    await ledger.append({
+      type: 'note',
+      actorId: 'agent_a',
+      labels: { tenant: 'other' },
+      payload: { text: 'other' },
+    });
+    await ledger.append({
+      type: 'note',
+      actorId: 'agent_a',
+      labels: { tenant: 'acme' },
+      payload: { text: 'one' },
+    });
+    await ledger.append({
+      type: 'note',
+      actorId: 'agent_a',
+      labels: { tenant: 'acme' },
+      payload: { text: 'two' },
+    });
+
+    const records = await ledger.query({ labels: { tenant: 'acme' }, limit: 1 });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.event.labels['tenant']).toBe('acme');
+    expect(records[0]?.event.payload).toEqual({ text: 'one' });
+  });
+
   it('enforces append-only sequencing at the relational store layer', async () => {
     const db = new FakeSqlDatabase();
     const ledger = await createLedger(db);

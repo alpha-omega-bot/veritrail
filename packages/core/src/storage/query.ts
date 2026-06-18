@@ -12,9 +12,17 @@ export function applyQuery(records: readonly LedgerRecord[], query: EventQuery):
     if (query.correlationId !== undefined && record.event.correlationId !== query.correlationId) {
       continue;
     }
+    if (query.labels !== undefined && !matchesLabels(record, query.labels)) continue;
     // Check the limit before pushing so `limit: 0` yields zero records.
     if (query.limit !== undefined && out.length >= query.limit) break;
     out.push(record);
   }
   return out;
+}
+
+function matchesLabels(record: LedgerRecord, labels: Readonly<Record<string, string>>): boolean {
+  for (const [key, value] of Object.entries(labels)) {
+    if (record.event.labels[key] !== value) return false;
+  }
+  return true;
 }

@@ -101,6 +101,37 @@ describe('applyQuery limit boundary', () => {
     expect(await ledger.query({ limit: 0 })).toHaveLength(0);
     expect(await ledger.query({ limit: 2 })).toHaveLength(2);
   });
+
+  it('applies label filters before limit', async () => {
+    const ledger = createInMemoryLedger({
+      clock: new FixedClock(1),
+      ids: new SequentialIdGenerator(),
+    });
+    await ledger.append({
+      type: 'note',
+      actorId: 'a',
+      labels: { tenant: 'other' },
+      payload: { text: 'other' },
+    });
+    await ledger.append({
+      type: 'note',
+      actorId: 'a',
+      labels: { tenant: 'acme' },
+      payload: { text: 'one' },
+    });
+    await ledger.append({
+      type: 'note',
+      actorId: 'a',
+      labels: { tenant: 'acme' },
+      payload: { text: 'two' },
+    });
+
+    const records = await ledger.query({ labels: { tenant: 'acme' }, limit: 1 });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.event.labels['tenant']).toBe('acme');
+    expect(records[0]?.event.payload).toEqual({ text: 'one' });
+  });
 });
 
 describe('verifyChain with a configured signer', () => {

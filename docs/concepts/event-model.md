@@ -151,8 +151,10 @@ So the caller controls only the _event_ (envelope + payload); `seq`, `timestamp`
 
 Reads go through `EventQuery` (`packages/core/src/storage/event-store.ts`),
 whose conditions are ANDed: `fromSeq`, `toSeq`, `types`, `actorId`,
-`correlationId`, `limit`. Results are always returned in `seq` order. This single
-query surface is what every projection below is built on.
+`correlationId`, exact-match `labels`, and `limit`. Label filters require every
+requested key/value pair to be present on the event. Results are always returned
+in `seq` order, and `limit` is applied after all filters. This single query
+surface is what every projection below is built on.
 
 ## Capability → event map
 
