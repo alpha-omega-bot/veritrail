@@ -6,11 +6,14 @@
 export { buildServer, type BuildServerOptions } from './app.js';
 export {
   ApiKeyAuthenticator,
+  parseApiKeyEntries,
   parseAuthHeader,
   type ApiKeyConfig,
   type ApiKeyPrincipal,
   type AuthConfig,
+  type RouteAccess,
   type ServerRole,
+  type ServerScope,
 } from './auth.js';
 export {
   DEFAULT_BODY_LIMIT_BYTES,

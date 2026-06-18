@@ -52,8 +52,9 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       transparency log.
 - [ ] **Server authN/authZ.** API-key auth, route roles, and ledger-recorded
       administrative policy/budget changes are implemented. Remaining work:
-      OIDC, tenant/project scoping, broader operator RBAC policy, and signed
-      administrative action verification. (threat: S1)
+      OIDC, tenant/project scoping, signed administrative action verification,
+      and broader policy composition beyond the current optional per-capability
+      operator route scopes. (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -169,6 +170,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Deepened server authZ with optional per-capability route
+  scopes for API keys. Existing role-only keys keep their current behavior, while
+  scoped operator keys can now be narrowed to surfaces such as `audit:read`,
+  `spend:read`, or `rollback:execute`; admin keys still satisfy all scopes. Added
+  auth-unit and HTTP-route regression tests plus server README documentation.
+  **Next:** continue the open server auth item with OIDC or tenant/project
+  scoping, or take append batching if staying in P1 backpressure work.
 - **2026-06-18** — Completed the P2.5 server `limit` handling item. Audit,
   forensics, and decision-memory read routes now validate `limit` at the HTTP
   boundary as a non-negative integer, preserving `limit=0` as an explicit empty

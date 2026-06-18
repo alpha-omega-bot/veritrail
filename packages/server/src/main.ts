@@ -1,5 +1,5 @@
 import { buildServer, type BuildServerOptions } from './app.js';
-import type { ApiKeyConfig, ServerRole } from './auth.js';
+import { parseApiKeyEntries } from './auth.js';
 import {
   DEFAULT_RATE_LIMIT_MAX,
   DEFAULT_RATE_LIMIT_WINDOW_MS,
@@ -14,7 +14,7 @@ const ledgerFile = process.env['VERITRAIL_LEDGER_FILE'];
 if (ledgerFile) options.ledgerFile = ledgerFile;
 const signerSecret = process.env['VERITRAIL_SIGNER_SECRET'];
 if (signerSecret) options.signerSecret = signerSecret;
-const apiKeys = parseApiKeys(process.env['VERITRAIL_API_KEYS']);
+const apiKeys = parseApiKeyEntries(process.env['VERITRAIL_API_KEYS']);
 if (apiKeys.length > 0) options.auth = { apiKeys };
 options.limits = limitsFromEnv();
 
@@ -25,31 +25,6 @@ try {
 } catch (error) {
   app.log.error(error);
   process.exit(1);
-}
-
-function parseApiKeys(raw: string | undefined): ApiKeyConfig[] {
-  if (!raw) return [];
-  return raw
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .map((entry) => {
-      const [id, actorId, secret, rolesRaw] = entry.split(':');
-      if (!id || !actorId || !secret || !rolesRaw) {
-        throw new Error('VERITRAIL_API_KEYS entries must be id:actorId:secret:role1|role2');
-      }
-      return {
-        id,
-        actorId,
-        secret,
-        roles: rolesRaw
-          .split('|')
-          .filter(
-            (role): role is ServerRole =>
-              role === 'ingest' || role === 'operator' || role === 'admin',
-          ),
-      };
-    });
 }
 
 function limitsFromEnv(): ServerLimitsConfig {

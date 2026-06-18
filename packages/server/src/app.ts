@@ -24,6 +24,7 @@ import {
   parseAuthHeader,
   type ApiKeyPrincipal,
   type AuthConfig,
+  type RouteAccess,
   type ServerRole,
 } from './auth.js';
 import { asNumber, asString, replyError, replyResult } from './http.js';
@@ -151,15 +152,26 @@ function registerRoutes(
   const auth = routeAuth(authenticator);
   const rateLimit = createRateLimitPreHandler(rateLimitConfig);
   const publicRoute = rateLimit ? { preHandler: [rateLimit] } : {};
-  const preHandlers = (roles: readonly ServerRole[]): ServerPreHandler[] => [
-    auth(roles),
+  const preHandlers = (access: RouteAccess | readonly ServerRole[]): ServerPreHandler[] => [
+    auth(access),
     ...(rateLimit ? [rateLimit] : []),
   ];
-  const readRoute = (roles: readonly ServerRole[]) => ({ preHandler: preHandlers(roles) });
-  const writeRoute = (roles: readonly ServerRole[]) => ({
-    preHandler: preHandlers(roles),
+  const readRoute = (access: RouteAccess | readonly ServerRole[]) => ({
+    preHandler: preHandlers(access),
+  });
+  const writeRoute = (access: RouteAccess | readonly ServerRole[]) => ({
+    preHandler: preHandlers(access),
     config: writeRouteConfig(),
   });
+  const auditRead: RouteAccess = { roles: ['operator'], scope: 'audit:read' };
+  const permissionsRead: RouteAccess = { roles: ['operator'], scope: 'permissions:read' };
+  const spendRead: RouteAccess = { roles: ['operator'], scope: 'spend:read' };
+  const decisionsRead: RouteAccess = { roles: ['operator'], scope: 'decisions:read' };
+  const evidenceRead: RouteAccess = { roles: ['operator'], scope: 'evidence:read' };
+  const vendorRiskRead: RouteAccess = { roles: ['operator'], scope: 'vendor-risk:read' };
+  const forensicsRead: RouteAccess = { roles: ['operator'], scope: 'forensics:read' };
+  const rollbackRead: RouteAccess = { roles: ['operator'], scope: 'rollback:read' };
+  const rollbackExecute: RouteAccess = { roles: ['operator'], scope: 'rollback:execute' };
 
   // ---- meta -------------------------------------------------------------
   app.get('/api', publicRoute, async () => ({
@@ -188,35 +200,35 @@ function registerRoutes(
   });
 
   // ---- audit ------------------------------------------------------------
-  app.get('/api/audit/events', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/audit/events', readRoute(auditRead), async (request, reply) => {
     const query = eventQueryFrom(request.query as Record<string, unknown>);
     if (!query.ok) return replyError(reply, query.error);
     const records = await audit.search(query.value);
     return reply.send(records);
   });
 
-  app.get('/api/audit/events/:seq', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/audit/events/:seq', readRoute(auditRead), async (request, reply) => {
     const seq = asNumber((request.params as Record<string, unknown>)['seq']);
     if (seq === undefined) return replyError(reply, validationError('seq must be a number'));
     const record = await audit.get(seq);
     return record ? reply.send(record) : reply.code(404).send({ error: { code: 'NOT_FOUND' } });
   });
 
-  app.get('/api/audit/summary', readRoute(['operator']), async (_request, reply) =>
+  app.get('/api/audit/summary', readRoute(auditRead), async (_request, reply) =>
     reply.send(await audit.summary()),
   );
 
-  app.get('/api/audit/verify', readRoute(['operator']), async (_request, reply) =>
+  app.get('/api/audit/verify', readRoute(auditRead), async (_request, reply) =>
     reply.send(await audit.verify()),
   );
 
-  app.get('/api/audit/export', readRoute(['operator']), async (_request, reply) => {
+  app.get('/api/audit/export', readRoute(auditRead), async (_request, reply) => {
     const ndjson = await audit.exportNdjson();
     return reply.header('content-type', 'application/x-ndjson').send(ndjson);
   });
 
   // ---- permissions ------------------------------------------------------
-  app.get('/api/permissions/policies', readRoute(['operator']), async (_request, reply) =>
+  app.get('/api/permissions/policies', readRoute(permissionsRead), async (_request, reply) =>
     reply.send(permissions.listPolicies()),
   );
 
@@ -254,7 +266,7 @@ function registerRoutes(
     return reply.send({ removed: true });
   });
 
-  app.post('/api/permissions/evaluate', readRoute(['operator']), async (request, reply) => {
+  app.post('/api/permissions/evaluate', readRoute(permissionsRead), async (request, reply) => {
     const parsed = parseActionWithActor(request.body);
     if (!parsed.ok) return replyError(reply, parsed.error);
     return reply.send(permissions.evaluate(parsed.action, parsed.opts));
@@ -267,7 +279,7 @@ function registerRoutes(
   });
 
   // ---- spend guard ------------------------------------------------------
-  app.get('/api/spend/budgets', readRoute(['operator']), async (_request, reply) =>
+  app.get('/api/spend/budgets', readRoute(spendRead), async (_request, reply) =>
     reply.send(spendGuard.listBudgets()),
   );
 
@@ -293,7 +305,7 @@ function registerRoutes(
     return replyResult(reply, result);
   });
 
-  app.get('/api/spend/status', readRoute(['operator']), async (_request, reply) =>
+  app.get('/api/spend/status', readRoute(spendRead), async (_request, reply) =>
     reply.send(await spendGuard.status()),
   );
 
@@ -317,7 +329,7 @@ function registerRoutes(
     replyResult(reply, await decisionMemory.record(request.body)),
   );
 
-  app.get('/api/decisions', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/decisions', readRoute(decisionsRead), async (request, reply) => {
     const q = request.query as Record<string, unknown>;
     const opts: { actorId?: string; limit?: number } = {};
     const actorId = asString(q['actorId']);
@@ -328,7 +340,7 @@ function registerRoutes(
     return reply.send(await decisionMemory.list(opts));
   });
 
-  app.get('/api/decisions/recall', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/decisions/recall', readRoute(decisionsRead), async (request, reply) => {
     const q = request.query as Record<string, unknown>;
     const query: { text?: string; actorId?: string; limit?: number } = {};
     const text = asString(q['text']);
@@ -346,16 +358,16 @@ function registerRoutes(
     replyResult(reply, await evidence.attach(request.body)),
   );
 
-  app.get('/api/evidence', readRoute(['operator']), async (_request, reply) =>
+  app.get('/api/evidence', readRoute(evidenceRead), async (_request, reply) =>
     reply.send(await evidence.list()),
   );
 
-  app.get('/api/evidence/:id/trace', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/evidence/:id/trace', readRoute(evidenceRead), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
     return replyResult(reply, await evidence.trace(id));
   });
 
-  app.post('/api/evidence/:id/verify', readRoute(['operator']), async (request, reply) => {
+  app.post('/api/evidence/:id/verify', readRoute(evidenceRead), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
     const content = (request.body as { content?: unknown })?.content;
     if (typeof content !== 'string') {
@@ -369,7 +381,7 @@ function registerRoutes(
     replyResult(reply, await vendorRisk.register(request.body)),
   );
 
-  app.get('/api/vendors', readRoute(['operator']), async (_request, reply) =>
+  app.get('/api/vendors', readRoute(vendorRiskRead), async (_request, reply) =>
     reply.send(await vendorRisk.listVendors()),
   );
 
@@ -377,22 +389,22 @@ function registerRoutes(
     replyResult(reply, await vendorRisk.recordSignal(request.body)),
   );
 
-  app.get('/api/vendors/:id/signals', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/vendors/:id/signals', readRoute(vendorRiskRead), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
     return reply.send(await vendorRisk.signalsFor(id));
   });
 
-  app.get('/api/vendor-risk/assess', readRoute(['operator']), async (_request, reply) =>
+  app.get('/api/vendor-risk/assess', readRoute(vendorRiskRead), async (_request, reply) =>
     reply.send(await vendorRisk.assess()),
   );
 
-  app.get('/api/vendor-risk/:id/score', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/vendor-risk/:id/score', readRoute(vendorRiskRead), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
     return replyResult(reply, await vendorRisk.score(id));
   });
 
   // ---- forensics --------------------------------------------------------
-  app.get('/api/forensics/incident', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/forensics/incident', readRoute(forensicsRead), async (request, reply) => {
     const correlationId = asString((request.query as Record<string, unknown>)['correlationId']);
     if (correlationId === undefined) {
       return replyError(reply, validationError('correlationId is required'));
@@ -400,14 +412,14 @@ function registerRoutes(
     return reply.send(await forensics.incident(correlationId));
   });
 
-  app.get('/api/forensics/timeline', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/forensics/timeline', readRoute(forensicsRead), async (request, reply) => {
     const query = eventQueryFrom(request.query as Record<string, unknown>);
     if (!query.ok) return replyError(reply, query.error);
     const entries = await forensics.timeline(query.value);
     return reply.send(entries);
   });
 
-  app.get('/api/forensics/cause/:causationId', readRoute(['operator']), async (request, reply) => {
+  app.get('/api/forensics/cause/:causationId', readRoute(forensicsRead), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['causationId']);
     return reply.send(await forensics.causeChain(id));
   });
@@ -415,7 +427,7 @@ function registerRoutes(
   // ---- rollback ---------------------------------------------------------
   app.post(
     '/api/rollback/plan/action/:actionId',
-    readRoute(['operator']),
+    readRoute(rollbackRead),
     async (request, reply) => {
       const id = String((request.params as Record<string, unknown>)['actionId']);
       return replyResult(reply, await rollback.planForAction(id));
@@ -424,14 +436,14 @@ function registerRoutes(
 
   app.get(
     '/api/rollback/plan/correlation/:correlationId',
-    readRoute(['operator']),
+    readRoute(rollbackRead),
     async (request, reply) => {
       const id = String((request.params as Record<string, unknown>)['correlationId']);
       return reply.send(await rollback.planForCorrelation(id));
     },
   );
 
-  app.post('/api/rollback/execute', writeRoute(['operator']), async (request, reply) => {
+  app.post('/api/rollback/execute', writeRoute(rollbackExecute), async (request, reply) => {
     const plan = (request.body as { plan?: unknown })?.plan;
     if (plan === null || typeof plan !== 'object') {
       return replyError(reply, validationError('plan is required'));
@@ -454,13 +466,13 @@ interface AdminActionInput {
 }
 
 function routeAuth(authenticator: ApiKeyAuthenticator | undefined) {
-  return (requiredRoles: readonly ServerRole[]) =>
+  return (access: RouteAccess | readonly ServerRole[]) =>
     async (request: FastifyRequest, reply: FastifyReply) => {
       if (!authenticator) return;
       const rawSecret =
         parseAuthHeader(request.headers.authorization) ??
         parseAuthHeader(request.headers['x-veritrail-api-key']);
-      const result = authenticator.authenticate(rawSecret, requiredRoles);
+      const result = authenticator.authenticate(rawSecret, access);
       if (result.ok) {
         request.principal = result.principal;
         return;
