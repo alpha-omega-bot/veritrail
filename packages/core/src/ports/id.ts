@@ -2,6 +2,8 @@ import { randomBytes } from 'node:crypto';
 
 import { systemClock, type Clock } from './clock.js';
 
+const MAX_COUNTER = 0xffffffff;
+
 /**
  * Generates unique identifiers. The default implementation produces
  * lexicographically sortable, time-ordered ids (similar in spirit to ULID):
@@ -14,9 +16,10 @@ export interface IdGenerator {
 }
 
 /**
- * Time-ordered id: `<prefix>_<48-bit time hex><16-bit counter hex><64-bit random hex>`.
- * The counter disambiguates ids minted within the same millisecond so that
- * ordering and uniqueness both hold under bursty creation.
+ * Time-ordered id: `<prefix>_<48-bit logical-time hex><32-bit counter hex><64-bit random hex>`.
+ * Logical time never moves backward for a generator instance, even when the
+ * injected clock does. The counter disambiguates ids minted within the same
+ * logical millisecond so ordering and uniqueness both hold under bursty creation.
  */
 export class DefaultIdGenerator implements IdGenerator {
   readonly #clock: Clock;
@@ -28,15 +31,18 @@ export class DefaultIdGenerator implements IdGenerator {
   }
 
   next(prefix = 'id'): string {
-    const time = this.#clock.now();
-    if (time === this.#lastTime) {
-      this.#counter += 1;
-    } else {
+    const time = Math.max(0, this.#clock.now());
+    if (time > this.#lastTime) {
       this.#lastTime = time;
       this.#counter = 0;
+    } else if (this.#counter >= MAX_COUNTER) {
+      this.#lastTime += 1;
+      this.#counter = 0;
+    } else {
+      this.#counter += 1;
     }
-    const timePart = Math.max(0, time).toString(16).padStart(12, '0');
-    const counterPart = (this.#counter & 0xffff).toString(16).padStart(4, '0');
+    const timePart = this.#lastTime.toString(16).padStart(12, '0');
+    const counterPart = this.#counter.toString(16).padStart(8, '0');
     const randomPart = randomBytes(8).toString('hex');
     return `${prefix}_${timePart}${counterPart}${randomPart}`;
   }
