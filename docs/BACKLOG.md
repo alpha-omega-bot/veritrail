@@ -60,7 +60,7 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
 - [ ] **Backpressure & limits.** Server request body caps, fixed-window API rate
       limiting, and write-route in-flight backpressure are implemented. Remaining
       work: append batching for high-throughput ingest. (threat: D1)
-- [ ] **`DefaultIdGenerator` hardening.** Guard against collisions when the clock
+- [x] **`DefaultIdGenerator` hardening.** Guard against collisions when the clock
       moves backward and on >65536 ids/ms. (review: core/low)
 
 ---
@@ -169,6 +169,12 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-18** — Hardened `DefaultIdGenerator`. It now uses a per-generator
+  logical timestamp that never moves backward and a widened sortable counter, so
+  ids remain unique and lexicographically ordered when the injected clock moves
+  backward or more than 65,536 ids are minted in one millisecond. **Next:** choose
+  the next focused P1 slice: append batching, deeper server auth scoping, or PII
+  encryption/retention.
 - **2026-06-18** — Added server defensive limits. `buildServer({ limits })` now
   configures a Fastify body cap, fixed-window API rate limits keyed by API key or
   IP, and write-route in-flight backpressure that returns `503` before append-like

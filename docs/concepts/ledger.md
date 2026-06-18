@@ -67,7 +67,10 @@ chained fields; the caller never sets them:
 - `prevHash` — `head.hash`, or `GENESIS_HASH` for the first record.
 - `timestamp` — `clock.now()`, the _ledger's_ authoritative receipt time (the
   event's own `occurredAt` is preserved separately inside `event`).
-- `id` — minted via `ids.next('evt')`.
+- `id` — minted via `ids.next('evt')`. The default id generator uses a
+  time-ordered logical timestamp plus a counter; it remains monotonic if the
+  injected clock moves backward and does not wrap at 65,536 ids in one
+  millisecond.
 - `hash` — `computeRecordHash(unhashed)`.
 
 If an `EventRedactor` is configured, `Ledger.append` applies it after the input

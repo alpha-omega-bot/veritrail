@@ -33,4 +33,27 @@ describe('DefaultIdGenerator', () => {
     const b = gen.next();
     expect(a < b).toBe(true);
   });
+
+  it('keeps ids unique and ordered when the clock moves backward', () => {
+    const clock = new FixedClock(1000);
+    const gen = new DefaultIdGenerator(clock);
+    const first = gen.next('evt');
+    clock.advance(-500);
+    const second = gen.next('evt');
+    clock.advance(-500);
+    const third = gen.next('evt');
+
+    expect(new Set([first, second, third]).size).toBe(3);
+    expect([first, second, third].sort()).toEqual([first, second, third]);
+  });
+
+  it('does not wrap the sortable counter after 65536 ids in one millisecond', () => {
+    const clock = new FixedClock(1000);
+    const gen = new DefaultIdGenerator(clock);
+    const ids = Array.from({ length: 65_538 }, () => gen.next('evt'));
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids[65_535]! < ids[65_536]!).toBe(true);
+    expect(ids[65_536]! < ids[65_537]!).toBe(true);
+  });
 });
