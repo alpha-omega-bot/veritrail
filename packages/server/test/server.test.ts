@@ -558,6 +558,124 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('enforces label scopes on spend charges and denies whole-spend projections', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'tenant-ingest',
+            actorId: 'tenant-agent',
+            secret: 'tenant-spend-ingest-secret-0001',
+            roles: ['ingest'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-spend-reader',
+            actorId: 'tenant-operator',
+            secret: 'tenant-spend-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['spend:read'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'operator',
+            actorId: 'operator-1',
+            secret: 'spend-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['spend:read'],
+          },
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'spend-admin-secret-0001',
+            roles: ['admin'],
+          },
+        ],
+      },
+    });
+    try {
+      await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/budgets',
+        headers: { authorization: 'Bearer spend-admin-secret-0001', ...json },
+        payload: body({
+          name: 'tenant cap',
+          scope: { kind: 'label', value: 'tenant=acme' },
+          limit: { currency: 'USD', amountMinor: 1000 },
+        }),
+      });
+
+      const missingLabels = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/charge',
+        headers: { authorization: 'Bearer tenant-spend-ingest-secret-0001', ...json },
+        payload: body({
+          actorId: 'tenant-agent',
+          amount: { currency: 'USD', amountMinor: 100 },
+        }),
+      });
+      expect(missingLabels.statusCode).toBe(400);
+      expect(missingLabels.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'request labels are outside API key scope' },
+      });
+
+      const wrongLabels = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/charge',
+        headers: { authorization: 'Bearer tenant-spend-ingest-secret-0001', ...json },
+        payload: body({
+          actorId: 'tenant-agent',
+          amount: { currency: 'USD', amountMinor: 100 },
+          labels: { tenant: 'other', project: 'alpha' },
+        }),
+      });
+      expect(wrongLabels.statusCode).toBe(400);
+
+      const allowed = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/charge',
+        headers: { authorization: 'Bearer tenant-spend-ingest-secret-0001', ...json },
+        payload: body({
+          actorId: 'tenant-agent',
+          amount: { currency: 'USD', amountMinor: 100 },
+          labels: { tenant: 'acme', project: 'alpha' },
+        }),
+      });
+      expect(allowed.statusCode).toBe(200);
+
+      const scopedBudgets = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/spend/budgets',
+        headers: { authorization: 'Bearer tenant-spend-reader-secret-0001' },
+      });
+      expect(scopedBudgets.statusCode).toBe(400);
+      expect(scopedBudgets.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
+      });
+
+      const scopedStatus = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/spend/status',
+        headers: { authorization: 'Bearer tenant-spend-reader-secret-0001' },
+      });
+      expect(scopedStatus.statusCode).toBe(400);
+      expect(scopedStatus.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
+      });
+
+      const unscopedStatus = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/spend/status',
+        headers: { authorization: 'Bearer spend-reader-secret-0001' },
+      });
+      expect(unscopedStatus.statusCode).toBe(200);
+      expect(unscopedStatus.json()).toMatchObject([{ spent: { amountMinor: 100 } }]);
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('accepts OIDC bearer tokens with mapped route scopes and label scopes', async () => {
     const { privateKey, jwk } = oidcFixture();
     const oidcApp = await buildServer({

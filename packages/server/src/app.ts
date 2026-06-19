@@ -332,9 +332,10 @@ function registerRoutes(
   });
 
   // ---- spend guard ------------------------------------------------------
-  app.get('/api/spend/budgets', readRoute(spendRead), async (_request, reply) =>
-    reply.send(spendGuard.listBudgets()),
-  );
+  app.get('/api/spend/budgets', readRoute(spendRead), async (request, reply) => {
+    if (isLabelScoped(request.principal)) return replyScopedRouteDenied(reply);
+    return reply.send(spendGuard.listBudgets());
+  });
 
   app.post('/api/spend/budgets', writeRoute(['admin']), async (request, reply) => {
     const candidate = withGeneratedId(request.body, 'bud', platform);
@@ -361,14 +362,17 @@ function registerRoutes(
     return replyResult(reply, result);
   });
 
-  app.get('/api/spend/status', readRoute(spendRead), async (_request, reply) =>
-    reply.send(await spendGuard.status()),
-  );
+  app.get('/api/spend/status', readRoute(spendRead), async (request, reply) => {
+    if (isLabelScoped(request.principal)) return replyScopedRouteDenied(reply);
+    return reply.send(await spendGuard.status());
+  });
 
   app.post('/api/spend/charge', writeRoute(['ingest']), async (request, reply) => {
     const parsed = AuthorizeInputSchema.safeParse(request.body);
     if (!parsed.success) return replyError(reply, validationError('invalid charge input'));
     const { actorId, amount, labels, actionId } = parsed.data;
+    const scoped = labelsForPrincipalScope(labels, request.principal);
+    if (!scoped.ok) return replyError(reply, scoped.error);
     return replyResult(
       reply,
       await spendGuard.charge({
@@ -605,6 +609,22 @@ function eventForPrincipalScope(
   }
 
   return { ok: true, value: parsed.data };
+}
+
+function labelsForPrincipalScope(
+  labels: Record<string, string> | undefined,
+  principal: ApiKeyPrincipal | undefined,
+): QueryParseResult<void> {
+  const labelScope = principal?.labelScope;
+  if (labelScope === undefined) return { ok: true, value: undefined };
+
+  for (const [key, value] of Object.entries(labelScope)) {
+    if (labels?.[key] !== value) {
+      return { ok: false, error: validationError('request labels are outside API key scope') };
+    }
+  }
+
+  return { ok: true, value: undefined };
 }
 
 function zodIssues(error: ZodError): JsonValue {
