@@ -6,6 +6,8 @@
 export { buildServer, type BuildServerOptions } from './app.js';
 export {
   ApiKeyAuthenticator,
+  ServerRoleSchema,
+  ServerScopeSchema,
   adminActionSignatureDetails,
   parseApiKeyEntries,
   parseAuthHeader,
@@ -15,6 +17,8 @@ export {
   type ApiKeyConfig,
   type ApiKeyPrincipal,
   type AuthConfig,
+  type OidcAuthConfig,
+  type OidcJwks,
   type RouteAccess,
   type ServerRole,
   type ServerScope,

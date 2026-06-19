@@ -186,7 +186,7 @@ function registerRoutes(
 ): void {
   const { ledger, audit, permissions, spendGuard, rollback, forensics, evidence } = platform;
   const { decisionMemory, vendorRisk } = platform;
-  const auth = routeAuth(authenticator);
+  const auth = routeAuth(authenticator, platform);
   const rateLimit = createRateLimitPreHandler(rateLimitConfig);
   const publicRoute = rateLimit ? { preHandler: [rateLimit] } : {};
   const preHandlers = (access: RouteAccess | readonly ServerRole[]): ServerPreHandler[] => [
@@ -530,14 +530,14 @@ type AdminActionSignatureParseResult =
   | { ok: true; value: AdminActionSignatureReceipt | undefined }
   | { ok: false; error: ReturnType<typeof validationError> };
 
-function routeAuth(authenticator: ApiKeyAuthenticator | undefined) {
+function routeAuth(authenticator: ApiKeyAuthenticator | undefined, platform: Platform) {
   return (access: RouteAccess | readonly ServerRole[]) =>
     async (request: FastifyRequest, reply: FastifyReply) => {
       if (!authenticator) return;
       const rawSecret =
         parseAuthHeader(request.headers.authorization) ??
         parseAuthHeader(request.headers['x-veritrail-api-key']);
-      const result = authenticator.authenticate(rawSecret, access);
+      const result = authenticator.authenticate(rawSecret, access, platform.ctx.clock.now());
       if (result.ok) {
         request.principal = result.principal;
         return;

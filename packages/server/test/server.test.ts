@@ -1,3 +1,10 @@
+import {
+  generateKeyPairSync,
+  sign as signJwtBytes,
+  type JsonWebKey,
+  type KeyObject,
+} from 'node:crypto';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
@@ -15,6 +22,9 @@ import { signAdminAction, type AdminActionSignatureReceipt } from '../src/auth.j
 const json = { 'content-type': 'application/json' };
 const body = (value: unknown): string => JSON.stringify(value);
 const adminSignatureSecret = 'admin-action-signing-secret-0001';
+const oidcIssuer = 'https://idp.example.test/';
+const oidcAudience = 'veritrail-server';
+const oidcNow = 1_700_000_000_000;
 
 function adminSignatureHeaders(input: {
   method: string;
@@ -40,6 +50,34 @@ function adminSignatureHeaders(input: {
     'x-veritrail-admin-nonce': receipt.nonce,
     'x-veritrail-admin-signature': signAdminAction(input.secret ?? adminSignatureSecret, receipt),
   };
+}
+
+function oidcFixture(): { privateKey: KeyObject; jwk: JsonWebKey } {
+  const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const publicJwk = pair.publicKey.export({ format: 'jwk' });
+  return {
+    privateKey: pair.privateKey,
+    jwk: { ...publicJwk, kid: 'oidc-key-1', alg: 'RS256' },
+  };
+}
+
+function oidcToken(privateKey: KeyObject, claims: Record<string, unknown>): string {
+  const encodedHeader = base64UrlJson({ alg: 'RS256', kid: 'oidc-key-1', typ: 'JWT' });
+  const encodedClaims = base64UrlJson({
+    iss: oidcIssuer,
+    sub: 'operator-oidc',
+    aud: oidcAudience,
+    exp: oidcNow / 1000 + 300,
+    iat: oidcNow / 1000,
+    ...claims,
+  });
+  const signingInput = `${encodedHeader}.${encodedClaims}`;
+  const signature = signJwtBytes('RSA-SHA256', Buffer.from(signingInput, 'utf8'), privateKey);
+  return `${signingInput}.${signature.toString('base64url')}`;
+}
+
+function base64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
 describe('Veritrail HTTP server', () => {
@@ -517,6 +555,114 @@ describe('Veritrail HTTP server auth', () => {
       });
     } finally {
       await scopedApp.close();
+    }
+  });
+
+  it('accepts OIDC bearer tokens with mapped route scopes and label scopes', async () => {
+    const { privateKey, jwk } = oidcFixture();
+    const oidcApp = await buildServer({
+      logger: false,
+      clock: { now: () => oidcNow },
+      auth: {
+        apiKeys: [
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'tenant-admin-secret-0001',
+            roles: ['admin'],
+          },
+        ],
+        oidc: {
+          issuer: oidcIssuer,
+          audience: oidcAudience,
+          jwks: { keys: [jwk] },
+          rolesClaim: 'groups',
+          scopesClaim: 'veritrail_scopes',
+          labelScopeClaim: 'labels',
+          roleMappings: { 'veritrail-operators': 'operator' },
+        },
+      },
+    });
+    try {
+      const adminHeaders = { authorization: 'Bearer tenant-admin-secret-0001', ...json };
+      await oidcApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: adminHeaders,
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          labels: { tenant: 'other', project: 'alpha' },
+          payload: { text: 'other tenant' },
+        }),
+      });
+      await oidcApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: adminHeaders,
+        payload: body({
+          type: 'note',
+          actorId: 'agent-1',
+          labels: { tenant: 'acme', project: 'alpha' },
+          payload: { text: 'visible tenant event' },
+        }),
+      });
+
+      const token = oidcToken(privateKey, {
+        sub: 'operator-oidc',
+        groups: ['veritrail-operators'],
+        veritrail_scopes: ['audit:read'],
+        labels: { tenant: 'acme', project: 'alpha' },
+      });
+      const audit = await oidcApp.inject({
+        method: 'GET',
+        url: '/api/audit/events',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(audit.statusCode).toBe(200);
+      const records = audit.json() as Array<{ event: { payload: { text?: string } } }>;
+      expect(records.map((record) => record.event.payload.text)).toEqual(['visible tenant event']);
+
+      const deniedSpend = await oidcApp.inject({
+        method: 'GET',
+        url: '/api/spend/status',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(deniedSpend.statusCode).toBe(403);
+    } finally {
+      await oidcApp.close();
+    }
+  });
+
+  it('rejects OIDC bearer tokens before protected route handlers run', async () => {
+    const { privateKey, jwk } = oidcFixture();
+    const oidcApp = await buildServer({
+      logger: false,
+      clock: { now: () => oidcNow },
+      auth: {
+        oidc: {
+          issuer: oidcIssuer,
+          audience: oidcAudience,
+          jwks: { keys: [jwk] },
+          defaultRoles: ['operator'],
+          defaultScopes: ['audit:read'],
+          clockSkewSeconds: 0,
+        },
+      },
+    });
+    try {
+      const wrongAudience = oidcToken(privateKey, { aud: 'wrong-audience' });
+      const denied = await oidcApp.inject({
+        method: 'GET',
+        url: '/api/audit/events',
+        headers: { authorization: `Bearer ${wrongAudience}` },
+      });
+      expect(denied.statusCode).toBe(401);
+      expect(denied.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'OIDC token audience is invalid' },
+      });
+    } finally {
+      await oidcApp.close();
     }
   });
 

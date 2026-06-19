@@ -52,10 +52,10 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       transparency log.
 - [ ] **Server authN/authZ.** API-key auth, route roles, and ledger-recorded
       administrative policy/budget changes are implemented. Remaining work:
-      OIDC, projection-specific tenancy semantics, and broader policy composition
-      beyond the current optional per-capability route scopes, label-scoped raw
-      ledger reads/writes, and signed administrative mutation requests. (threat:
-      S1)
+      OIDC discovery/JWKS refresh, projection-specific tenancy semantics, and
+      broader policy composition beyond the current optional per-capability route
+      scopes, static-JWKS OIDC bearer JWT verification, label-scoped raw ledger
+      reads/writes, and signed administrative mutation requests. (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -171,6 +171,14 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-19** — Continued P1 server auth with static-JWKS OIDC bearer JWT
+  verification. `buildServer({ auth: { oidc } })` now validates RS256 compact
+  JWTs against configured issuer/audience/JWKS, maps configured claims into the
+  existing Veritrail principal model, and enforces route scopes plus label scopes
+  through the same auth path as API keys. The server binary accepts
+  `VERITRAIL_OIDC_*` env config. **Next:** continue server auth with OIDC
+  discovery/JWKS refresh, projection-specific tenancy semantics, or broader
+  policy composition.
 - **2026-06-18** — Added opt-in signed administrative mutation verification for
   server policy/budget writes. When configured, admin routes require
   `x-veritrail-admin-*` HMAC headers over method, path, timestamp, nonce, and
