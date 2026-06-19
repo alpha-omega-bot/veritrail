@@ -1,3 +1,10 @@
+import {
+  generateKeyPairSync,
+  sign as signJwtBytes,
+  type JsonWebKey,
+  type KeyObject,
+} from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 import { asJson, hashJson } from '@veritrail/core';
 
@@ -9,6 +16,49 @@ import {
   signAdminAction,
   type AdminActionSignatureReceipt,
 } from '../src/auth.js';
+
+const OIDC_ISSUER = 'https://idp.example.test/';
+const OIDC_AUDIENCE = 'veritrail-server';
+const OIDC_NOW = 1_700_000_000_000;
+
+function oidcFixture(): { privateKey: KeyObject; jwk: JsonWebKey } {
+  const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const publicJwk = pair.publicKey.export({ format: 'jwk' });
+  return {
+    privateKey: pair.privateKey,
+    jwk: { ...publicJwk, kid: 'oidc-key-1', alg: 'RS256' },
+  };
+}
+
+function jwtFrom(
+  privateKey: KeyObject,
+  claims: Record<string, unknown>,
+  header: Record<string, unknown> = {},
+): string {
+  const encodedHeader = base64UrlJson({ alg: 'RS256', kid: 'oidc-key-1', typ: 'JWT', ...header });
+  const encodedClaims = base64UrlJson(claims);
+  const signingInput = `${encodedHeader}.${encodedClaims}`;
+  const signature = signJwtBytes('RSA-SHA256', Buffer.from(signingInput, 'utf8'), privateKey);
+  return `${signingInput}.${signature.toString('base64url')}`;
+}
+
+function baseClaims(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    iss: OIDC_ISSUER,
+    sub: 'operator-oidc',
+    aud: OIDC_AUDIENCE,
+    exp: OIDC_NOW / 1000 + 300,
+    iat: OIDC_NOW / 1000,
+    groups: ['veritrail-operators'],
+    veritrail_scopes: 'audit:read forensics:read',
+    labels: { tenant: 'acme', project: 'alpha' },
+    ...overrides,
+  };
+}
+
+function base64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+}
 
 describe('ApiKeyAuthenticator', () => {
   it('authenticates bearer tokens and applies admin role inheritance', () => {
@@ -205,6 +255,113 @@ describe('ApiKeyAuthenticator', () => {
         now: matchingBodyReceipt.timestamp,
       }),
     ).toMatchObject({ ok: true });
+  });
+
+  it('authenticates RS256 OIDC bearer tokens into the existing principal model', () => {
+    const { privateKey, jwk } = oidcFixture();
+    const auth = new ApiKeyAuthenticator({
+      oidc: {
+        issuer: OIDC_ISSUER,
+        audience: OIDC_AUDIENCE,
+        jwks: { keys: [jwk] },
+        rolesClaim: 'groups',
+        scopesClaim: 'veritrail_scopes',
+        labelScopeClaim: 'labels',
+        roleMappings: { 'veritrail-operators': 'operator' },
+      },
+    });
+
+    const result = auth.authenticate(
+      jwtFrom(privateKey, baseClaims()),
+      { roles: ['operator'], scope: 'audit:read' },
+      OIDC_NOW,
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.principal).toMatchObject({
+        id: `oidc:${OIDC_ISSUER}:operator-oidc`,
+        actorId: 'operator-oidc',
+        roles: ['operator'],
+        scopes: ['audit:read', 'forensics:read'],
+        labelScope: { tenant: 'acme', project: 'alpha' },
+      });
+    }
+  });
+
+  it('prefers an exact API key match over OIDC parsing for JWT-shaped secrets', () => {
+    const { jwk } = oidcFixture();
+    const auth = new ApiKeyAuthenticator({
+      apiKeys: [
+        {
+          id: 'operator',
+          actorId: 'api-key-operator',
+          secret: 'header.payload.signature',
+          roles: ['operator'],
+        },
+      ],
+      oidc: {
+        issuer: OIDC_ISSUER,
+        audience: OIDC_AUDIENCE,
+        jwks: { keys: [jwk] },
+        defaultRoles: ['admin'],
+      },
+    });
+
+    const result = auth.authenticate('header.payload.signature', ['operator'], OIDC_NOW);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.principal).toMatchObject({
+        id: 'operator',
+        actorId: 'api-key-operator',
+        roles: ['operator'],
+      });
+    }
+  });
+
+  it('rejects OIDC tokens with invalid signature, issuer, audience, or time claims', () => {
+    const { privateKey, jwk } = oidcFixture();
+    const other = oidcFixture();
+    const auth = new ApiKeyAuthenticator({
+      oidc: {
+        issuer: OIDC_ISSUER,
+        audience: OIDC_AUDIENCE,
+        jwks: { keys: [jwk] },
+        defaultRoles: ['operator'],
+        defaultScopes: ['audit:read'],
+        clockSkewSeconds: 0,
+      },
+    });
+
+    expect(
+      auth.authenticate(
+        jwtFrom(other.privateKey, baseClaims()),
+        { roles: ['operator'], scope: 'audit:read' },
+        OIDC_NOW,
+      ),
+    ).toMatchObject({ ok: false, failure: { reason: 'invalid' } });
+    expect(
+      auth.authenticate(
+        jwtFrom(privateKey, baseClaims({ iss: 'https://evil.example.test/' })),
+        { roles: ['operator'], scope: 'audit:read' },
+        OIDC_NOW,
+      ),
+    ).toMatchObject({ ok: false, failure: { reason: 'invalid' } });
+    expect(
+      auth.authenticate(
+        jwtFrom(privateKey, baseClaims({ aud: 'other-service' })),
+        { roles: ['operator'], scope: 'audit:read' },
+        OIDC_NOW,
+      ),
+    ).toMatchObject({ ok: false, failure: { reason: 'invalid' } });
+    expect(
+      auth.authenticate(
+        jwtFrom(privateKey, baseClaims({ exp: OIDC_NOW / 1000 - 1 })),
+        { roles: ['operator'], scope: 'audit:read' },
+        OIDC_NOW,
+      ),
+    ).toMatchObject({ ok: false, failure: { reason: 'invalid' } });
   });
 });
 

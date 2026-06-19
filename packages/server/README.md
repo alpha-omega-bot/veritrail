@@ -90,6 +90,33 @@ const app = await buildServer({
 });
 ```
 
+OIDC bearer JWTs can be enabled alongside API keys or as the only credential
+source. The built-in verifier is dependency-light and validates RS256 compact
+JWTs against a configured issuer, audience, and static JWKS; dynamic discovery
+and JWKS refresh belong in deployment/provider adapters. Valid tokens are mapped
+into the same Veritrail principal model used by API keys, so route roles, route
+scopes, and label scopes are enforced consistently.
+
+```ts
+const app = await buildServer({
+  auth: {
+    oidc: {
+      issuer: 'https://idp.example.com/',
+      audience: 'veritrail-server',
+      jwks: JSON.parse(process.env.VERITRAIL_OIDC_JWKS!),
+      rolesClaim: 'groups',
+      scopesClaim: 'veritrail_scopes',
+      labelScopeClaim: 'veritrail_labels',
+      roleMappings: { 'veritrail-operators': 'operator' },
+    },
+  },
+});
+```
+
+OIDC tokens should carry either Veritrail-native roles/scopes or external claim
+values mapped with `roleMappings` / `scopeMappings`. Unlike legacy scope-free API
+keys, OIDC principals only receive configured or claim-derived scopes.
+
 Administrative policy and budget changes append `admin.action` facts to the same
 ledger for operator audit.
 
@@ -156,6 +183,17 @@ The binary also accepts:
 - `VERITRAIL_ADMIN_ACTION_SIGNING_SECRET`
 - `VERITRAIL_ADMIN_ACTION_SIGNING_KEY_ID` (default `admin-action`)
 - `VERITRAIL_ADMIN_ACTION_SIGNING_MAX_SKEW_MS` (default 5 minutes)
+- `VERITRAIL_OIDC_ISSUER`
+- `VERITRAIL_OIDC_AUDIENCE` (comma-separated accepted audiences)
+- `VERITRAIL_OIDC_JWKS` (JSON object with `keys`, currently RS256 public keys)
+- `VERITRAIL_OIDC_ACTOR_CLAIM` (default `sub`)
+- `VERITRAIL_OIDC_ROLES_CLAIM`
+- `VERITRAIL_OIDC_SCOPES_CLAIM`
+- `VERITRAIL_OIDC_LABEL_SCOPE_CLAIM`
+- `VERITRAIL_OIDC_DEFAULT_ROLES` / `VERITRAIL_OIDC_DEFAULT_SCOPES`
+- `VERITRAIL_OIDC_ROLE_MAPPINGS` / `VERITRAIL_OIDC_SCOPE_MAPPINGS`
+  (comma-separated `external=veritrail` pairs)
+- `VERITRAIL_OIDC_CLOCK_SKEW_SECONDS` (default 60)
 
 ## Limits
 
