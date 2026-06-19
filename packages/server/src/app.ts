@@ -537,7 +537,7 @@ function routeAuth(authenticator: ApiKeyAuthenticator | undefined, platform: Pla
       const rawSecret =
         parseAuthHeader(request.headers.authorization) ??
         parseAuthHeader(request.headers['x-veritrail-api-key']);
-      const result = authenticator.authenticate(rawSecret, access, platform.ctx.clock.now());
+      const result = await authenticator.authenticate(rawSecret, access, platform.ctx.clock.now());
       if (result.ok) {
         request.principal = result.principal;
         return;

@@ -15,18 +15,19 @@ import {
   parseAuthHeader,
   signAdminAction,
   type AdminActionSignatureReceipt,
+  type OidcJwksFetch,
 } from '../src/auth.js';
 
 const OIDC_ISSUER = 'https://idp.example.test/';
 const OIDC_AUDIENCE = 'veritrail-server';
 const OIDC_NOW = 1_700_000_000_000;
 
-function oidcFixture(): { privateKey: KeyObject; jwk: JsonWebKey } {
+function oidcFixture(kid = 'oidc-key-1'): { privateKey: KeyObject; jwk: JsonWebKey } {
   const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const publicJwk = pair.publicKey.export({ format: 'jwk' });
   return {
     privateKey: pair.privateKey,
-    jwk: { ...publicJwk, kid: 'oidc-key-1', alg: 'RS256' },
+    jwk: { ...publicJwk, kid, alg: 'RS256' },
   };
 }
 
@@ -61,7 +62,7 @@ function base64UrlJson(value: unknown): string {
 }
 
 describe('ApiKeyAuthenticator', () => {
-  it('authenticates bearer tokens and applies admin role inheritance', () => {
+  it('authenticates bearer tokens and applies admin role inheritance', async () => {
     const auth = new ApiKeyAuthenticator({
       apiKeys: [
         {
@@ -73,13 +74,15 @@ describe('ApiKeyAuthenticator', () => {
       ],
     });
 
-    const result = auth.authenticate(parseAuthHeader('Bearer admin-secret-0001'), ['operator']);
+    const result = await auth.authenticate(parseAuthHeader('Bearer admin-secret-0001'), [
+      'operator',
+    ]);
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.principal.actorId).toBe('operator-1');
   });
 
-  it('rejects missing, invalid, and under-scoped keys', () => {
+  it('rejects missing, invalid, and under-scoped keys', async () => {
     const auth = new ApiKeyAuthenticator({
       apiKeys: [
         {
@@ -91,21 +94,21 @@ describe('ApiKeyAuthenticator', () => {
       ],
     });
 
-    expect(auth.authenticate(undefined, ['ingest'])).toMatchObject({
+    await expect(auth.authenticate(undefined, ['ingest'])).resolves.toMatchObject({
       ok: false,
       failure: { reason: 'missing' },
     });
-    expect(auth.authenticate('wrong-secret-0001', ['ingest'])).toMatchObject({
+    await expect(auth.authenticate('wrong-secret-0001', ['ingest'])).resolves.toMatchObject({
       ok: false,
       failure: { reason: 'invalid' },
     });
-    expect(auth.authenticate('ingest-secret-0001', ['admin'])).toMatchObject({
+    await expect(auth.authenticate('ingest-secret-0001', ['admin'])).resolves.toMatchObject({
       ok: false,
       failure: { reason: 'forbidden' },
     });
   });
 
-  it('allows scope-free keys through scoped routes for backwards compatibility', () => {
+  it('allows scope-free keys through scoped routes for backwards compatibility', async () => {
     const auth = new ApiKeyAuthenticator({
       apiKeys: [
         {
@@ -117,7 +120,7 @@ describe('ApiKeyAuthenticator', () => {
       ],
     });
 
-    const result = auth.authenticate('operator-secret-0001', {
+    const result = await auth.authenticate('operator-secret-0001', {
       roles: ['operator'],
       scope: 'audit:read',
     });
@@ -125,7 +128,7 @@ describe('ApiKeyAuthenticator', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('enforces configured route scopes after the role check succeeds', () => {
+  it('enforces configured route scopes after the role check succeeds', async () => {
     const auth = new ApiKeyAuthenticator({
       apiKeys: [
         {
@@ -145,18 +148,18 @@ describe('ApiKeyAuthenticator', () => {
       ],
     });
 
-    expect(
+    await expect(
       auth.authenticate('audit-secret-0001', { roles: ['operator'], scope: 'audit:read' }),
-    ).toMatchObject({ ok: true });
-    expect(
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
       auth.authenticate('audit-secret-0001', { roles: ['operator'], scope: 'spend:read' }),
-    ).toMatchObject({
+    ).resolves.toMatchObject({
       ok: false,
       failure: { reason: 'forbidden' },
     });
-    expect(
+    await expect(
       auth.authenticate('admin-secret-0001', { roles: ['operator'], scope: 'audit:read' }),
-    ).toMatchObject({ ok: true });
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it('checks roles before scopes', () => {
@@ -257,7 +260,7 @@ describe('ApiKeyAuthenticator', () => {
     ).toMatchObject({ ok: true });
   });
 
-  it('authenticates RS256 OIDC bearer tokens into the existing principal model', () => {
+  it('authenticates RS256 OIDC bearer tokens into the existing principal model', async () => {
     const { privateKey, jwk } = oidcFixture();
     const auth = new ApiKeyAuthenticator({
       oidc: {
@@ -271,7 +274,7 @@ describe('ApiKeyAuthenticator', () => {
       },
     });
 
-    const result = auth.authenticate(
+    const result = await auth.authenticate(
       jwtFrom(privateKey, baseClaims()),
       { roles: ['operator'], scope: 'audit:read' },
       OIDC_NOW,
@@ -289,7 +292,7 @@ describe('ApiKeyAuthenticator', () => {
     }
   });
 
-  it('prefers an exact API key match over OIDC parsing for JWT-shaped secrets', () => {
+  it('prefers an exact API key match over OIDC parsing for JWT-shaped secrets', async () => {
     const { jwk } = oidcFixture();
     const auth = new ApiKeyAuthenticator({
       apiKeys: [
@@ -308,7 +311,7 @@ describe('ApiKeyAuthenticator', () => {
       },
     });
 
-    const result = auth.authenticate('header.payload.signature', ['operator'], OIDC_NOW);
+    const result = await auth.authenticate('header.payload.signature', ['operator'], OIDC_NOW);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -320,7 +323,7 @@ describe('ApiKeyAuthenticator', () => {
     }
   });
 
-  it('rejects OIDC tokens with invalid signature, issuer, audience, or time claims', () => {
+  it('rejects OIDC tokens with invalid signature, issuer, audience, or time claims', async () => {
     const { privateKey, jwk } = oidcFixture();
     const other = oidcFixture();
     const auth = new ApiKeyAuthenticator({
@@ -334,34 +337,187 @@ describe('ApiKeyAuthenticator', () => {
       },
     });
 
-    expect(
+    await expect(
       auth.authenticate(
         jwtFrom(other.privateKey, baseClaims()),
         { roles: ['operator'], scope: 'audit:read' },
         OIDC_NOW,
       ),
-    ).toMatchObject({ ok: false, failure: { reason: 'invalid' } });
-    expect(
+    ).resolves.toMatchObject({ ok: false, failure: { reason: 'invalid' } });
+    await expect(
       auth.authenticate(
         jwtFrom(privateKey, baseClaims({ iss: 'https://evil.example.test/' })),
         { roles: ['operator'], scope: 'audit:read' },
         OIDC_NOW,
       ),
-    ).toMatchObject({ ok: false, failure: { reason: 'invalid' } });
-    expect(
+    ).resolves.toMatchObject({ ok: false, failure: { reason: 'invalid' } });
+    await expect(
       auth.authenticate(
         jwtFrom(privateKey, baseClaims({ aud: 'other-service' })),
         { roles: ['operator'], scope: 'audit:read' },
         OIDC_NOW,
       ),
-    ).toMatchObject({ ok: false, failure: { reason: 'invalid' } });
-    expect(
+    ).resolves.toMatchObject({ ok: false, failure: { reason: 'invalid' } });
+    await expect(
       auth.authenticate(
         jwtFrom(privateKey, baseClaims({ exp: OIDC_NOW / 1000 - 1 })),
         { roles: ['operator'], scope: 'audit:read' },
         OIDC_NOW,
       ),
-    ).toMatchObject({ ok: false, failure: { reason: 'invalid' } });
+    ).resolves.toMatchObject({ ok: false, failure: { reason: 'invalid' } });
+  });
+
+  it('refreshes JWKS from a configured URL when a token references a new kid', async () => {
+    const current = oidcFixture('oidc-key-current');
+    const rotated = oidcFixture('oidc-key-rotated');
+    const fetches: string[] = [];
+    const jwksFetch: OidcJwksFetch = async (url) => {
+      fetches.push(url);
+      return { keys: [rotated.jwk] };
+    };
+    const auth = new ApiKeyAuthenticator({
+      oidc: {
+        issuer: OIDC_ISSUER,
+        audience: OIDC_AUDIENCE,
+        jwks: { keys: [current.jwk] },
+        jwksUrl: 'https://idp.example.test/jwks.json',
+        jwksFetch,
+        defaultRoles: ['operator'],
+        defaultScopes: ['audit:read'],
+      },
+    });
+
+    const result = await auth.authenticate(
+      jwtFrom(rotated.privateKey, baseClaims(), { kid: 'oidc-key-rotated' }),
+      { roles: ['operator'], scope: 'audit:read' },
+      OIDC_NOW,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fetches).toEqual(['https://idp.example.test/jwks.json']);
+  });
+
+  it('keeps using stale cached JWKS when refresh fails but the cached key matches', async () => {
+    const { privateKey, jwk } = oidcFixture('oidc-key-current');
+    let fetchCount = 0;
+    const auth = new ApiKeyAuthenticator({
+      oidc: {
+        issuer: OIDC_ISSUER,
+        audience: OIDC_AUDIENCE,
+        jwks: { keys: [jwk] },
+        jwksUrl: 'https://idp.example.test/jwks.json',
+        jwksFetch: async () => {
+          fetchCount += 1;
+          throw new Error('issuer unavailable');
+        },
+        jwksCacheTtlMs: 1,
+        defaultRoles: ['operator'],
+        defaultScopes: ['audit:read'],
+      },
+    });
+    const token = jwtFrom(privateKey, baseClaims(), { kid: 'oidc-key-current' });
+
+    await expect(
+      auth.authenticate(token, { roles: ['operator'], scope: 'audit:read' }, OIDC_NOW),
+    ).resolves.toMatchObject({ ok: true });
+    const result = await auth.authenticate(
+      token,
+      { roles: ['operator'], scope: 'audit:read' },
+      OIDC_NOW + 10,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fetchCount).toBe(1);
+  });
+
+  it('fails closed for an unknown kid when JWKS refresh fails', async () => {
+    const current = oidcFixture('oidc-key-current');
+    const rotated = oidcFixture('oidc-key-rotated');
+    const auth = new ApiKeyAuthenticator({
+      oidc: {
+        issuer: OIDC_ISSUER,
+        audience: OIDC_AUDIENCE,
+        jwks: { keys: [current.jwk] },
+        jwksUrl: 'https://idp.example.test/jwks.json',
+        jwksFetch: async () => {
+          throw new Error('issuer unavailable');
+        },
+        defaultRoles: ['operator'],
+        defaultScopes: ['audit:read'],
+      },
+    });
+
+    await expect(
+      auth.authenticate(
+        jwtFrom(rotated.privateKey, baseClaims(), { kid: 'oidc-key-rotated' }),
+        { roles: ['operator'], scope: 'audit:read' },
+        OIDC_NOW,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      failure: { reason: 'invalid', error: { message: 'OIDC token signature is invalid' } },
+    });
+  });
+
+  it('rejects malformed fetched JWKS instead of trusting the token', async () => {
+    const rotated = oidcFixture('oidc-key-rotated');
+    const auth = new ApiKeyAuthenticator({
+      oidc: {
+        issuer: OIDC_ISSUER,
+        audience: OIDC_AUDIENCE,
+        jwksUrl: 'https://idp.example.test/jwks.json',
+        jwksFetch: async () => ({ keys: [{ kid: 'oidc-key-rotated', alg: 'RS256' }] }),
+        defaultRoles: ['operator'],
+        defaultScopes: ['audit:read'],
+      },
+    });
+
+    await expect(
+      auth.authenticate(
+        jwtFrom(rotated.privateKey, baseClaims(), { kid: 'oidc-key-rotated' }),
+        { roles: ['operator'], scope: 'audit:read' },
+        OIDC_NOW,
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      failure: { reason: 'invalid', error: { message: 'OIDC token signature is invalid' } },
+    });
+  });
+
+  it('discovers the JWKS URL from an OIDC discovery document', async () => {
+    const rotated = oidcFixture('oidc-key-rotated');
+    const fetches: string[] = [];
+    const auth = new ApiKeyAuthenticator({
+      oidc: {
+        issuer: OIDC_ISSUER,
+        audience: OIDC_AUDIENCE,
+        discoveryUrl: 'https://idp.example.test/.well-known/openid-configuration',
+        jwksFetch: async (url) => {
+          fetches.push(url);
+          if (url.endsWith('/.well-known/openid-configuration')) {
+            return {
+              issuer: OIDC_ISSUER,
+              jwks_uri: 'https://idp.example.test/jwks.json',
+            };
+          }
+          return { keys: [rotated.jwk] };
+        },
+        defaultRoles: ['operator'],
+        defaultScopes: ['audit:read'],
+      },
+    });
+
+    const result = await auth.authenticate(
+      jwtFrom(rotated.privateKey, baseClaims(), { kid: 'oidc-key-rotated' }),
+      { roles: ['operator'], scope: 'audit:read' },
+      OIDC_NOW,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fetches).toEqual([
+      'https://idp.example.test/.well-known/openid-configuration',
+      'https://idp.example.test/jwks.json',
+    ]);
   });
 });
 

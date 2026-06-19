@@ -67,8 +67,16 @@ export interface OidcAuthConfig {
   readonly issuer: string;
   /** Accepted `aud` claim values. */
   readonly audience: string | readonly string[];
-  /** Static public JWKS. Dynamic discovery/refresh belongs in a provider adapter. */
-  readonly jwks: OidcJwks;
+  /** Optional static public JWKS used as the initial cache and offline fallback. */
+  readonly jwks?: OidcJwks;
+  /** Optional JWKS endpoint for cache refresh and key rotation. */
+  readonly jwksUrl?: string;
+  /** Optional OIDC discovery document URL used to resolve `jwks_uri`. */
+  readonly discoveryUrl?: string;
+  /** JWKS cache lifetime in milliseconds. Defaults to 5 minutes. */
+  readonly jwksCacheTtlMs?: number;
+  /** Optional fetch adapter for tests or embedded deployments. Defaults to global fetch. */
+  readonly jwksFetch?: OidcJwksFetch;
   /** Claim used as the Veritrail actor id. Defaults to `sub`. */
   readonly actorIdClaim?: string;
   /** Claim containing Veritrail roles or external values mapped by `roleMappings`. */
@@ -92,6 +100,8 @@ export interface OidcAuthConfig {
 export interface OidcJwks {
   readonly keys: readonly JsonWebKey[];
 }
+
+export type OidcJwksFetch = (url: string) => Promise<unknown>;
 
 export interface RouteAccess {
   readonly roles: readonly ServerRole[];
@@ -153,6 +163,7 @@ export interface AdminActionSignatureReceipt {
 
 const DEFAULT_ADMIN_ACTION_SIGNATURE_MAX_SKEW_MS = 5 * 60 * 1000;
 const DEFAULT_OIDC_CLOCK_SKEW_SECONDS = 60;
+const DEFAULT_OIDC_JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 const OIDC_ALGORITHMS = ['RS256'] as const;
 type OidcAlgorithm = (typeof OIDC_ALGORITHMS)[number];
 
@@ -177,15 +188,30 @@ const OidcJwkSchema = z.custom<JsonWebKey>((value) => {
   );
 });
 
+const OidcJwksSchema = z
+  .object({
+    keys: z.array(OidcJwkSchema).min(1),
+  })
+  .strict();
+
+const OidcJwksFetchSchema = z.custom<OidcJwksFetch>((value) => typeof value === 'function');
+
+const OidcDiscoveryDocumentSchema = z
+  .object({
+    issuer: z.string().url().optional(),
+    jwks_uri: z.string().url(),
+  })
+  .passthrough();
+
 const OidcAuthConfigSchema = z
   .object({
     issuer: z.string().url(),
     audience: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
-    jwks: z
-      .object({
-        keys: z.array(OidcJwkSchema).min(1),
-      })
-      .strict(),
+    jwks: OidcJwksSchema.optional(),
+    jwksUrl: z.string().url().optional(),
+    discoveryUrl: z.string().url().optional(),
+    jwksCacheTtlMs: z.number().int().nonnegative().safe().optional(),
+    jwksFetch: OidcJwksFetchSchema.optional(),
     actorIdClaim: z.string().min(1).optional(),
     rolesClaim: z.string().min(1).optional(),
     scopesClaim: z.string().min(1).optional(),
@@ -196,7 +222,19 @@ const OidcAuthConfigSchema = z
     scopeMappings: z.record(z.string().min(1), ServerScopeSchema).optional(),
     clockSkewSeconds: z.number().int().nonnegative().safe().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((config, ctx) => {
+    if (
+      config.jwks === undefined &&
+      config.jwksUrl === undefined &&
+      config.discoveryUrl === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'OIDC auth requires jwks, jwksUrl, or discoveryUrl',
+      });
+    }
+  });
 
 const AuthConfigSchema = z
   .object({
@@ -231,7 +269,11 @@ interface StoredApiKey {
 interface NormalizedOidcConfig {
   readonly issuer: string;
   readonly audiences: ReadonlySet<string>;
-  readonly keys: readonly OidcVerificationKey[];
+  readonly initialKeys: readonly OidcVerificationKey[];
+  readonly jwksUrl?: string;
+  readonly discoveryUrl?: string;
+  readonly jwksCacheTtlMs: number;
+  readonly jwksFetch: OidcJwksFetch;
   readonly actorIdClaim: string;
   readonly rolesClaim?: string;
   readonly scopesClaim?: string;
@@ -294,11 +336,11 @@ export class ApiKeyAuthenticator {
     return this.#adminSigning !== undefined;
   }
 
-  authenticate(
+  async authenticate(
     rawSecret: string | undefined,
     requirement: RouteAccess | readonly ServerRole[],
     now = Date.now(),
-  ): AuthResult {
+  ): Promise<AuthResult> {
     if (rawSecret === undefined) {
       return {
         ok: false,
@@ -401,13 +443,20 @@ export class ApiKeyAuthenticator {
 
 class OidcTokenVerifier {
   readonly #config: NormalizedOidcConfig;
+  #keys: readonly OidcVerificationKey[];
+  #cacheExpiresAt: number;
+  #resolvedJwksUrl: string | undefined;
+  #refreshInFlight: Promise<boolean> | undefined;
 
   constructor(config: ParsedOidcAuthConfig) {
     this.#config = normalizeOidcConfig(config);
+    this.#keys = this.#config.initialKeys;
+    this.#cacheExpiresAt = 0;
+    this.#resolvedJwksUrl = this.#config.jwksUrl;
   }
 
-  authenticate(rawJwt: string, access: RouteAccess, nowMs: number): AuthResult {
-    const verified = this.#verify(rawJwt, nowMs);
+  async authenticate(rawJwt: string, access: RouteAccess, nowMs: number): Promise<AuthResult> {
+    const verified = await this.#verify(rawJwt, nowMs);
     if (!verified.ok) return verified;
     if (!hasAccess(verified.principal, access)) {
       return {
@@ -418,15 +467,15 @@ class OidcTokenVerifier {
     return { ok: true, principal: verified.principal };
   }
 
-  #verify(
+  async #verify(
     rawJwt: string,
     nowMs: number,
-  ): { readonly ok: true; readonly principal: ApiKeyPrincipal } | AuthResult {
+  ): Promise<{ readonly ok: true; readonly principal: ApiKeyPrincipal } | AuthResult> {
     const parsed = parseJwt(rawJwt);
     if (!parsed.ok) return invalidOidc(parsed.reason);
 
     const { header, claims, signingInput, signature } = parsed;
-    if (!this.#verifySignature(header, signingInput, signature)) {
+    if (!(await this.#verifySignature(header, signingInput, signature, nowMs))) {
       return invalidOidc('OIDC token signature is invalid');
     }
     const claimsResult = this.#validateClaims(claims, Math.floor(nowMs / 1000));
@@ -435,8 +484,21 @@ class OidcTokenVerifier {
     return { ok: true, principal };
   }
 
-  #verifySignature(header: JwtHeader, signingInput: string, signature: Buffer): boolean {
-    for (const candidate of this.#keysFor(header)) {
+  async #verifySignature(
+    header: JwtHeader,
+    signingInput: string,
+    signature: Buffer,
+    nowMs: number,
+  ): Promise<boolean> {
+    let candidates = this.#matchingKeys(header);
+    if (this.#shouldRefresh(header, candidates, nowMs)) {
+      const refreshed = await this.#refreshKeys(nowMs);
+      if (refreshed) {
+        candidates = this.#matchingKeys(header);
+      }
+    }
+
+    for (const candidate of candidates) {
       const algorithm = cryptoAlgorithmFor(header.alg);
       try {
         if (
@@ -451,13 +513,65 @@ class OidcTokenVerifier {
     return false;
   }
 
-  #keysFor(header: JwtHeader): readonly OidcVerificationKey[] {
-    return this.#config.keys.filter((key) => {
+  #matchingKeys(header: JwtHeader): readonly OidcVerificationKey[] {
+    return this.#keys.filter((key) => {
       if (header.kid !== undefined && key.kid !== undefined && key.kid !== header.kid) return false;
       if (header.kid !== undefined && key.kid === undefined) return false;
       if (key.alg !== undefined && key.alg !== header.alg) return false;
       return true;
     });
+  }
+
+  #shouldRefresh(
+    header: JwtHeader,
+    candidates: readonly OidcVerificationKey[],
+    nowMs: number,
+  ): boolean {
+    if (this.#config.jwksUrl === undefined && this.#config.discoveryUrl === undefined) return false;
+    if (candidates.length === 0 && header.kid !== undefined) return true;
+    if (candidates.length > 0 && this.#cacheExpiresAt === 0) {
+      this.#cacheExpiresAt = nowMs + this.#config.jwksCacheTtlMs;
+      return false;
+    }
+    return nowMs >= this.#cacheExpiresAt;
+  }
+
+  async #refreshKeys(nowMs: number): Promise<boolean> {
+    this.#refreshInFlight ??= this.#refreshKeysOnce(nowMs).finally(() => {
+      this.#refreshInFlight = undefined;
+    });
+    return this.#refreshInFlight;
+  }
+
+  async #refreshKeysOnce(nowMs: number): Promise<boolean> {
+    try {
+      const jwksUrl = await this.#jwksUrl();
+      if (jwksUrl === undefined) return false;
+      const jwks = await this.#fetchJwks(jwksUrl);
+      const keys = verificationKeysFromJwks(jwks);
+      if (keys.length === 0) return false;
+      this.#keys = keys;
+      this.#cacheExpiresAt = nowMs + this.#config.jwksCacheTtlMs;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async #jwksUrl(): Promise<string | undefined> {
+    if (this.#resolvedJwksUrl !== undefined) return this.#resolvedJwksUrl;
+    const discoveryUrl = this.#config.discoveryUrl;
+    if (discoveryUrl === undefined) return undefined;
+    const document = OidcDiscoveryDocumentSchema.parse(await this.#config.jwksFetch(discoveryUrl));
+    if (document.issuer !== undefined && document.issuer !== this.#config.issuer) {
+      throw new Error('OIDC discovery issuer does not match configured issuer');
+    }
+    this.#resolvedJwksUrl = document.jwks_uri;
+    return this.#resolvedJwksUrl;
+  }
+
+  async #fetchJwks(jwksUrl: string): Promise<OidcJwks> {
+    return OidcJwksSchema.parse(await this.#config.jwksFetch(jwksUrl));
   }
 
   #validateClaims(
@@ -669,7 +783,28 @@ function normalizeAdminActionSigning(config: {
 }
 
 function normalizeOidcConfig(parsed: ParsedOidcAuthConfig): NormalizedOidcConfig {
-  const keys = parsed.jwks.keys.map((jwk): OidcVerificationKey => {
+  return {
+    issuer: parsed.issuer,
+    audiences: new Set(Array.isArray(parsed.audience) ? parsed.audience : [parsed.audience]),
+    initialKeys: parsed.jwks === undefined ? [] : verificationKeysFromJwks(parsed.jwks),
+    ...(parsed.jwksUrl !== undefined ? { jwksUrl: parsed.jwksUrl } : {}),
+    ...(parsed.discoveryUrl !== undefined ? { discoveryUrl: parsed.discoveryUrl } : {}),
+    jwksCacheTtlMs: parsed.jwksCacheTtlMs ?? DEFAULT_OIDC_JWKS_CACHE_TTL_MS,
+    jwksFetch: parsed.jwksFetch ?? defaultOidcJwksFetch,
+    actorIdClaim: parsed.actorIdClaim ?? 'sub',
+    ...(parsed.rolesClaim !== undefined ? { rolesClaim: parsed.rolesClaim } : {}),
+    ...(parsed.scopesClaim !== undefined ? { scopesClaim: parsed.scopesClaim } : {}),
+    ...(parsed.labelScopeClaim !== undefined ? { labelScopeClaim: parsed.labelScopeClaim } : {}),
+    defaultRoles: parsed.defaultRoles ?? [],
+    defaultScopes: parsed.defaultScopes ?? [],
+    roleMappings: parsed.roleMappings ?? {},
+    scopeMappings: parsed.scopeMappings ?? {},
+    clockSkewSeconds: parsed.clockSkewSeconds ?? DEFAULT_OIDC_CLOCK_SKEW_SECONDS,
+  };
+}
+
+function verificationKeysFromJwks(jwks: OidcJwks): OidcVerificationKey[] {
+  return jwks.keys.map((jwk): OidcVerificationKey => {
     try {
       const key = createPublicKey({ key: jwk, format: 'jwk' });
       return {
@@ -681,20 +816,17 @@ function normalizeOidcConfig(parsed: ParsedOidcAuthConfig): NormalizedOidcConfig
       throw new Error('OIDC JWKS contains an invalid public key');
     }
   });
-  return {
-    issuer: parsed.issuer,
-    audiences: new Set(Array.isArray(parsed.audience) ? parsed.audience : [parsed.audience]),
-    keys,
-    actorIdClaim: parsed.actorIdClaim ?? 'sub',
-    ...(parsed.rolesClaim !== undefined ? { rolesClaim: parsed.rolesClaim } : {}),
-    ...(parsed.scopesClaim !== undefined ? { scopesClaim: parsed.scopesClaim } : {}),
-    ...(parsed.labelScopeClaim !== undefined ? { labelScopeClaim: parsed.labelScopeClaim } : {}),
-    defaultRoles: parsed.defaultRoles ?? [],
-    defaultScopes: parsed.defaultScopes ?? [],
-    roleMappings: parsed.roleMappings ?? {},
-    scopeMappings: parsed.scopeMappings ?? {},
-    clockSkewSeconds: parsed.clockSkewSeconds ?? DEFAULT_OIDC_CLOCK_SKEW_SECONDS,
-  };
+}
+
+async function defaultOidcJwksFetch(url: string): Promise<unknown> {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`OIDC JWKS fetch failed with HTTP ${response.status}`);
+  }
+  return response.json() as Promise<unknown>;
 }
 
 function parseJwt(rawJwt: string):

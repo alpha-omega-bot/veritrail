@@ -92,10 +92,13 @@ const app = await buildServer({
 
 OIDC bearer JWTs can be enabled alongside API keys or as the only credential
 source. The built-in verifier is dependency-light and validates RS256 compact
-JWTs against a configured issuer, audience, and static JWKS; dynamic discovery
-and JWKS refresh belong in deployment/provider adapters. Valid tokens are mapped
-into the same Veritrail principal model used by API keys, so route roles, route
-scopes, and label scopes are enforced consistently.
+JWTs against a configured issuer, audience, and JWKS. A static JWKS can be used
+alone for fixed keys or as the initial cache/fallback for a remote JWKS endpoint.
+`jwksUrl` and `discoveryUrl` enable key refresh without adding provider SDK
+dependencies; fetched documents are validated before use, unknown `kid` values
+trigger refresh, and cached matching keys remain usable during issuer outages.
+Valid tokens are mapped into the same Veritrail principal model used by API keys,
+so route roles, route scopes, and label scopes are enforced consistently.
 
 ```ts
 const app = await buildServer({
@@ -104,6 +107,7 @@ const app = await buildServer({
       issuer: 'https://idp.example.com/',
       audience: 'veritrail-server',
       jwks: JSON.parse(process.env.VERITRAIL_OIDC_JWKS!),
+      jwksUrl: 'https://idp.example.com/.well-known/jwks.json',
       rolesClaim: 'groups',
       scopesClaim: 'veritrail_scopes',
       labelScopeClaim: 'veritrail_labels',
@@ -116,6 +120,11 @@ const app = await buildServer({
 OIDC tokens should carry either Veritrail-native roles/scopes or external claim
 values mapped with `roleMappings` / `scopeMappings`. Unlike legacy scope-free API
 keys, OIDC principals only receive configured or claim-derived scopes.
+
+Remote JWKS refresh uses a five-minute cache TTL by default. Set
+`jwksCacheTtlMs` to tune that interval, or provide `discoveryUrl` to resolve
+`jwks_uri` from an OIDC discovery document. The discovery document's `issuer`,
+when present, must match the configured issuer.
 
 Administrative policy and budget changes append `admin.action` facts to the same
 ledger for operator audit.
@@ -185,7 +194,11 @@ The binary also accepts:
 - `VERITRAIL_ADMIN_ACTION_SIGNING_MAX_SKEW_MS` (default 5 minutes)
 - `VERITRAIL_OIDC_ISSUER`
 - `VERITRAIL_OIDC_AUDIENCE` (comma-separated accepted audiences)
-- `VERITRAIL_OIDC_JWKS` (JSON object with `keys`, currently RS256 public keys)
+- `VERITRAIL_OIDC_JWKS` (optional JSON object with `keys`, currently RS256
+  public keys)
+- `VERITRAIL_OIDC_JWKS_URL`
+- `VERITRAIL_OIDC_DISCOVERY_URL`
+- `VERITRAIL_OIDC_JWKS_CACHE_TTL_MS` (default 5 minutes)
 - `VERITRAIL_OIDC_ACTOR_CLAIM` (default `sub`)
 - `VERITRAIL_OIDC_ROLES_CLAIM`
 - `VERITRAIL_OIDC_SCOPES_CLAIM`
