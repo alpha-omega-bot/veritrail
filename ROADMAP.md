@@ -42,11 +42,11 @@ Make the system durable, secure, and operable for a first real deployment.
 - ✅ **External anchoring**: core `AnchorStore` port, in-memory adapter, helpers
   to publish and verify ledger-head checkpoints, and operator runbook for
   transparency-log/object-store/notary deployments.
-- 🚧 **AuthN/AuthZ** on the server: API-key auth, static-JWKS OIDC bearer JWTs,
+- 🚧 **AuthN/AuthZ** on the server: API-key auth, OIDC bearer JWTs with static
+  JWKS plus discovery/JWKS refresh,
   route roles/scopes, label-scoped ledger reads/writes, signed administrative
   mutation requests, and ledger-recorded policy/budget changes are implemented;
-  OIDC discovery/JWKS refresh, projection-specific tenancy semantics, and broader
-  policy composition remain.
+  projection-specific tenancy semantics and broader policy composition remain.
 - 🚧 **PII handling**: append-boundary field redaction hook and path redactor are
   implemented; encryption hooks and configurable retention with cryptographic
   erasure remain.

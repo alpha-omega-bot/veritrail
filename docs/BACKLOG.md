@@ -50,12 +50,12 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       runbook are in place. Production deployments still need concrete provider
       adapters to publish checkpoints to an independent object store, notary, or
       transparency log.
-- [ ] **Server authN/authZ.** API-key auth, route roles, and ledger-recorded
+- [ ] **Server authN/authZ.** API-key auth, route roles/scopes, OIDC bearer JWTs
+      with static JWKS plus discovery/JWKS refresh, label-scoped raw ledger
+      reads/writes, signed administrative mutation requests, and ledger-recorded
       administrative policy/budget changes are implemented. Remaining work:
-      OIDC discovery/JWKS refresh, projection-specific tenancy semantics, and
-      broader policy composition beyond the current optional per-capability route
-      scopes, static-JWKS OIDC bearer JWT verification, label-scoped raw ledger
-      reads/writes, and signed administrative mutation requests. (threat: S1)
+      projection-specific tenancy semantics and broader policy composition.
+      (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -171,6 +171,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-19** — Continued P1 server auth with OIDC discovery/JWKS refresh.
+  Server OIDC config can now use static JWKS as a seed/fallback, fetch JWKS from
+  `jwksUrl`, or resolve `jwks_uri` from a discovery document. JWT verification
+  refreshes on unknown `kid` or TTL expiry, validates fetched documents before
+  trusting them, preserves cached matching keys during issuer outages, and fails
+  closed for unknown keys or malformed remote JWKS. **Next:** continue server
+  auth with projection-specific tenancy semantics or broader policy composition.
 - **2026-06-19** — Continued P1 server auth with static-JWKS OIDC bearer JWT
   verification. `buildServer({ auth: { oidc } })` now validates RS256 compact
   JWTs against configured issuer/audience/JWKS, maps configured claims into the

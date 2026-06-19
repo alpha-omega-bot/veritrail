@@ -19,6 +19,7 @@ export {
   type AuthConfig,
   type OidcAuthConfig,
   type OidcJwks,
+  type OidcJwksFetch,
   type RouteAccess,
   type ServerRole,
   type ServerScope,

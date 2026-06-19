@@ -72,13 +72,16 @@ function oidcFromEnv(): OidcAuthConfig | undefined {
   const issuer = process.env['VERITRAIL_OIDC_ISSUER'];
   const audience = csvFromEnv(process.env['VERITRAIL_OIDC_AUDIENCE']);
   const jwksRaw = process.env['VERITRAIL_OIDC_JWKS'];
-  if (!issuer && audience.length === 0 && !jwksRaw) return undefined;
-  if (!issuer || audience.length === 0 || !jwksRaw) {
+  const jwksUrl = process.env['VERITRAIL_OIDC_JWKS_URL'];
+  const discoveryUrl = process.env['VERITRAIL_OIDC_DISCOVERY_URL'];
+  if (!issuer && audience.length === 0 && !jwksRaw && !jwksUrl && !discoveryUrl) return undefined;
+  if (!issuer || audience.length === 0 || (!jwksRaw && !jwksUrl && !discoveryUrl)) {
     throw new Error(
-      'VERITRAIL_OIDC_ISSUER, VERITRAIL_OIDC_AUDIENCE, and VERITRAIL_OIDC_JWKS are required together',
+      'VERITRAIL_OIDC_ISSUER, VERITRAIL_OIDC_AUDIENCE, and one of VERITRAIL_OIDC_JWKS, VERITRAIL_OIDC_JWKS_URL, or VERITRAIL_OIDC_DISCOVERY_URL are required together',
     );
   }
-  const parsedJwks = JSON.parse(jwksRaw) as OidcAuthConfig['jwks'];
+  const parsedJwks =
+    jwksRaw === undefined ? undefined : (JSON.parse(jwksRaw) as OidcAuthConfig['jwks']);
   const actorIdClaim = process.env['VERITRAIL_OIDC_ACTOR_CLAIM'];
   const rolesClaim = process.env['VERITRAIL_OIDC_ROLES_CLAIM'];
   const scopesClaim = process.env['VERITRAIL_OIDC_SCOPES_CLAIM'];
@@ -88,10 +91,14 @@ function oidcFromEnv(): OidcAuthConfig | undefined {
   const roleMappings = mappingFromEnv(process.env['VERITRAIL_OIDC_ROLE_MAPPINGS'], parseRole);
   const scopeMappings = mappingFromEnv(process.env['VERITRAIL_OIDC_SCOPE_MAPPINGS'], parseScope);
   const clockSkewSeconds = parseNonNegativeInt(process.env['VERITRAIL_OIDC_CLOCK_SKEW_SECONDS']);
+  const jwksCacheTtlMs = parseNonNegativeInt(process.env['VERITRAIL_OIDC_JWKS_CACHE_TTL_MS']);
   return {
     issuer,
     audience: audience.length === 1 ? audience[0]! : audience,
-    jwks: parsedJwks,
+    ...(parsedJwks !== undefined ? { jwks: parsedJwks } : {}),
+    ...(jwksUrl !== undefined && jwksUrl.length > 0 ? { jwksUrl } : {}),
+    ...(discoveryUrl !== undefined && discoveryUrl.length > 0 ? { discoveryUrl } : {}),
+    ...(jwksCacheTtlMs !== undefined ? { jwksCacheTtlMs } : {}),
     ...(actorIdClaim !== undefined && actorIdClaim.length > 0 ? { actorIdClaim } : {}),
     ...(rolesClaim !== undefined && rolesClaim.length > 0 ? { rolesClaim } : {}),
     ...(scopesClaim !== undefined && scopesClaim.length > 0 ? { scopesClaim } : {}),
