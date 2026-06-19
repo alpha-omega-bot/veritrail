@@ -52,10 +52,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       transparency log.
 - [ ] **Server authN/authZ.** API-key auth, route roles/scopes, OIDC bearer JWTs
       with static JWKS plus discovery/JWKS refresh, label-scoped raw ledger
-      reads/writes, signed administrative mutation requests, and ledger-recorded
-      administrative policy/budget changes are implemented. Remaining work:
-      projection-specific tenancy semantics and broader policy composition.
-      (threat: S1)
+      reads/writes and spend charges, signed administrative mutation requests,
+      ledger-recorded administrative policy/budget changes, and fail-closed
+      scoped access for unpartitioned module projections are implemented.
+      Remaining work: tenant-filtered projection semantics and broader policy
+      composition. (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -171,6 +172,15 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-19** — Continued P1 server auth projection-tenancy semantics with a
+  fail-closed boundary for unpartitioned module projections. Label-scoped
+  principals can still use raw scoped ledger writes/reads and scoped spend
+  charges, but permissions policy routes, decision memory, evidence, vendor
+  risk, forensics incident/cause-chain, rollback planning/execution, and scoped
+  admin/config mutations now require an unscoped key until each module has an
+  explicit tenant-filtered projection. **Next:** either add tenant-filtered
+  projection semantics route by route, or continue P1 with PII encryption and
+  retention / append batching.
 - **2026-06-19** — Continued P1 server auth projection-tenancy semantics with a
   focused Spend Guard HTTP-boundary slice. Label-scoped ingest keys can no
   longer append `/api/spend/charge` facts unless the charge labels include the

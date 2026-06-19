@@ -65,15 +65,19 @@ Supported scopes: `audit:read`, `permissions:read`, `spend:read`,
 `decisions:read`, `evidence:read`, `vendor-risk:read`, `forensics:read`,
 `rollback:read`, `rollback:execute`.
 
-API keys may also include `labelScope` to constrain raw ledger event writes and
-raw ledger-query reads by exact event labels. Scoped writes to `/api/events` must
-include the configured labels. Scoped reads on `/api/audit/events` and
-`/api/forensics/timeline` force those labels onto the query before `limit` is
-applied; `/api/audit/events/:seq` hides records outside the scope. Spend charges
-from scoped ingest keys must also carry the configured labels. Whole-chain,
-whole-spend, or graph-reconstruction endpoints such as audit summary/verify/export,
-spend budgets/status, and forensics incident/cause-chain require an unscoped
-operator/admin key.
+API keys may also include `labelScope` to constrain exact event labels. Scoped
+writes to `/api/events` must include the configured labels. Scoped reads on
+`/api/audit/events` and `/api/forensics/timeline` force those labels onto the
+query before `limit` is applied; `/api/audit/events/:seq` hides records outside
+the scope. Spend charges from scoped ingest keys must also carry the configured
+labels.
+
+Routes that read or mutate server-held configuration, whole-ledger integrity, or
+module projections without tenant-filtered semantics require an unscoped key.
+This includes permissions policy routes, audit summary/verify/export, spend
+budgets/status, decision memory, evidence, vendor risk, forensics
+incident/cause-chain, and rollback planning/execution. Tenant-scoped projections
+should be added route by route once each module has an explicit tenant model.
 
 ```ts
 const app = await buildServer({

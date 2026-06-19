@@ -43,10 +43,11 @@ Make the system durable, secure, and operable for a first real deployment.
   to publish and verify ledger-head checkpoints, and operator runbook for
   transparency-log/object-store/notary deployments.
 - 🚧 **AuthN/AuthZ** on the server: API-key auth, OIDC bearer JWTs with static
-  JWKS plus discovery/JWKS refresh,
-  route roles/scopes, label-scoped ledger reads/writes, signed administrative
-  mutation requests, and ledger-recorded policy/budget changes are implemented;
-  projection-specific tenancy semantics and broader policy composition remain.
+  JWKS plus discovery/JWKS refresh, route roles/scopes, label-scoped raw ledger
+  reads/writes and spend charges, signed administrative mutation requests,
+  ledger-recorded policy/budget changes, and fail-closed scoped access for
+  unpartitioned module projections are implemented; tenant-filtered projection
+  semantics and broader policy composition remain.
 - 🚧 **PII handling**: append-boundary field redaction hook and path redactor are
   implemented; encryption hooks and configurable retention with cryptographic
   erasure remain.
