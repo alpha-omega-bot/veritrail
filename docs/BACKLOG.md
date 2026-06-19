@@ -171,6 +171,14 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-19** — Continued P1 server auth projection-tenancy semantics with a
+  focused Spend Guard HTTP-boundary slice. Label-scoped ingest keys can no
+  longer append `/api/spend/charge` facts unless the charge labels include the
+  configured scope, and label-scoped spend operators are denied whole-deployment
+  `/api/spend/budgets` and `/api/spend/status` projections until tenant-filtered
+  spend views exist. **Next:** continue projection-specific tenancy for
+  decision/evidence/vendor/rollback routes or implement tenant-filtered spend
+  read projections.
 - **2026-06-19** — Continued P1 server auth with OIDC discovery/JWKS refresh.
   Server OIDC config can now use static JWKS as a seed/fallback, fetch JWKS from
   `jwksUrl`, or resolve `jwks_uri` from a discovery document. JWT verification

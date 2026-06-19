@@ -69,9 +69,11 @@ API keys may also include `labelScope` to constrain raw ledger event writes and
 raw ledger-query reads by exact event labels. Scoped writes to `/api/events` must
 include the configured labels. Scoped reads on `/api/audit/events` and
 `/api/forensics/timeline` force those labels onto the query before `limit` is
-applied; `/api/audit/events/:seq` hides records outside the scope. Whole-chain
-or graph-reconstruction endpoints such as audit summary/verify/export and
-forensics incident/cause-chain require an unscoped operator/admin key.
+applied; `/api/audit/events/:seq` hides records outside the scope. Spend charges
+from scoped ingest keys must also carry the configured labels. Whole-chain,
+whole-spend, or graph-reconstruction endpoints such as audit summary/verify/export,
+spend budgets/status, and forensics incident/cause-chain require an unscoped
+operator/admin key.
 
 ```ts
 const app = await buildServer({
