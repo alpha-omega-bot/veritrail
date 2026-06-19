@@ -44,10 +44,11 @@ Make the system durable, secure, and operable for a first real deployment.
   transparency-log/object-store/notary deployments.
 - 🚧 **AuthN/AuthZ** on the server: API-key auth, OIDC bearer JWTs with static
   JWKS plus discovery/JWKS refresh, route roles/scopes, label-scoped raw ledger
-  reads/writes and spend charges, signed administrative mutation requests,
-  ledger-recorded policy/budget changes, and fail-closed scoped access for
-  unpartitioned module projections are implemented; tenant-filtered projection
-  semantics and broader policy composition remain.
+  reads/writes, spend charges and spend read projections, signed administrative
+  mutation requests, ledger-recorded policy/budget changes, and fail-closed
+  scoped access for unpartitioned module projections are implemented;
+  tenant-filtered projection semantics for the remaining modules and broader
+  policy composition remain.
 - 🚧 **PII handling**: append-boundary field redaction hook and path redactor are
   implemented; encryption hooks and configurable retention with cryptographic
   erasure remain.

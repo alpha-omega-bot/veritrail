@@ -241,6 +241,69 @@ describe('scoped budgets', () => {
     mod.setBudget({ name: 'off', scope: { kind: 'global' }, limit: money(10), enabled: false });
     expect(isOk(await mod.charge({ actorId: 'a', amount: money(1000) }))).toBe(true);
   });
+
+  it('narrows budget and status projections by label scope', async () => {
+    const { mod } = makeModule();
+    mod.setBudget({
+      name: 'global',
+      scope: { kind: 'global' },
+      limit: money(10_000),
+    });
+    mod.setBudget({
+      name: 'acme tenant',
+      scope: { kind: 'label', value: 'tenant=acme' },
+      limit: money(1_000),
+    });
+    mod.setBudget({
+      name: 'other tenant',
+      scope: { kind: 'label', value: 'tenant=other' },
+      limit: money(1_000),
+    });
+
+    expect(
+      isOk(
+        await mod.charge({
+          actorId: 'a',
+          amount: money(100),
+          labels: { tenant: 'acme', project: 'alpha' },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isOk(
+        await mod.charge({
+          actorId: 'a',
+          amount: money(900),
+          labels: { tenant: 'other', project: 'alpha' },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isOk(
+        await mod.charge({
+          actorId: 'a',
+          amount: money(200),
+          labels: { tenant: 'acme', project: 'beta' },
+        }),
+      ),
+    ).toBe(true);
+
+    expect(mod.listBudgets({ labelScope: { tenant: 'acme', project: 'alpha' } })).toMatchObject([
+      { name: 'acme tenant' },
+    ]);
+    const scoped = await mod.status({ labelScope: { tenant: 'acme', project: 'alpha' } });
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]!.budget.name).toBe('acme tenant');
+    expect(scoped[0]!.spent.amountMinor).toBe(100);
+    expect(scoped[0]!.remaining.amountMinor).toBe(900);
+
+    const unscoped = await mod.status();
+    expect(unscoped.map((status) => [status.budget.name, status.spent.amountMinor])).toEqual([
+      ['global', 1200],
+      ['acme tenant', 300],
+      ['other tenant', 900],
+    ]);
+  });
 });
 
 describe('window filtering', () => {

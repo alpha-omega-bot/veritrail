@@ -11,5 +11,6 @@ export {
   createSpendGuardModule,
   type SpendStatus,
   type AuthorizeInput,
+  type SpendProjectionOptions,
 } from './engine.js';
 export { WINDOW_MS, windowStart, withinWindow } from './windows.js';

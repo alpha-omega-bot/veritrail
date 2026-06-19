@@ -42,6 +42,15 @@ export interface AuthorizeInput {
   actionId?: string;
 }
 
+/** Optional read-projection filters for budget/status views. */
+export interface SpendProjectionOptions {
+  /**
+   * Restrict the projection to budgets and charge records carrying these exact
+   * labels. Intended for server-side tenant/project scoped read views.
+   */
+  readonly labelScope?: Readonly<Record<string, string>>;
+}
+
 /** Negate a money amount (for `limit - spent` via {@link addMoney}). */
 function negate(m: Money): Money {
   return { currency: m.currency, amountMinor: -m.amountMinor };
@@ -92,9 +101,9 @@ export class SpendGuardModule implements VeritrailModule {
     return ok(budget);
   }
 
-  /** All configured budgets, in insertion order. */
-  listBudgets(): Budget[] {
-    return [...this.#budgets.values()];
+  /** All configured budgets, in insertion order, optionally narrowed by labels. */
+  listBudgets(opts?: SpendProjectionOptions): Budget[] {
+    return [...this.#budgets.values()].filter((budget) => budgetInProjection(budget, opts));
   }
 
   /**
@@ -185,11 +194,11 @@ export class SpendGuardModule implements VeritrailModule {
     });
   }
 
-  /** Window-aware spend status for every configured budget. */
-  async status(): Promise<SpendStatus[]> {
+  /** Window-aware spend status for every configured budget, optionally narrowed by labels. */
+  async status(opts?: SpendProjectionOptions): Promise<SpendStatus[]> {
     const out: SpendStatus[] = [];
-    for (const budget of this.#budgets.values()) {
-      const spent = await this.#spent(budget);
+    for (const budget of this.listBudgets(opts)) {
+      const spent = await this.#spent(budget, opts);
       const remainingResult = addMoney(budget.limit, negate(spent));
       const remaining = isErr(remainingResult)
         ? zeroMoney(budget.limit.currency)
@@ -220,11 +229,8 @@ export class SpendGuardModule implements VeritrailModule {
       case 'actor':
         return scope.value === input.actorId;
       case 'label': {
-        const eq = scope.value.indexOf('=');
-        if (eq <= 0) return false;
-        const key = scope.value.slice(0, eq);
-        const value = scope.value.slice(eq + 1);
-        return input.labels?.[key] === value;
+        const parsed = parseLabelScopeValue(scope.value);
+        return parsed !== null && input.labels?.[parsed.key] === parsed.value;
       }
       default:
         return false;
@@ -238,9 +244,12 @@ export class SpendGuardModule implements VeritrailModule {
    * the budget's window relative to `ctx.clock.now()`. Amounts are summed in the
    * budget's currency; charges in a different currency are ignored.
    */
-  async #spent(budget: Budget): Promise<Money> {
+  async #spent(budget: Budget, opts?: SpendProjectionOptions): Promise<Money> {
     const now = this.#ctx.clock.now();
-    const records = await this.#ctx.ledger.query({ types: ['budget.charged'] });
+    const records = await this.#ctx.ledger.query({
+      types: ['budget.charged'],
+      ...(opts?.labelScope !== undefined ? { labels: opts.labelScope } : {}),
+    });
     let total = zeroMoney(budget.limit.currency);
 
     for (const record of records) {
@@ -274,4 +283,18 @@ export class SpendGuardModule implements VeritrailModule {
 /** Construct a {@link SpendGuardModule} from a module context. */
 export function createSpendGuardModule(ctx: ModuleContext): SpendGuardModule {
   return new SpendGuardModule(ctx);
+}
+
+function budgetInProjection(budget: Budget, opts?: SpendProjectionOptions): boolean {
+  const labelScope = opts?.labelScope;
+  if (labelScope === undefined) return true;
+  if (budget.scope.kind !== 'label') return false;
+  const parsed = parseLabelScopeValue(budget.scope.value);
+  return parsed !== null && labelScope[parsed.key] === parsed.value;
+}
+
+function parseLabelScopeValue(value: string): { key: string; value: string } | null {
+  const eq = value.indexOf('=');
+  if (eq <= 0) return null;
+  return { key: value.slice(0, eq), value: value.slice(eq + 1) };
 }
