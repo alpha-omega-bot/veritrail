@@ -70,12 +70,14 @@ writes to `/api/events` must include the configured labels. Scoped reads on
 `/api/audit/events` and `/api/forensics/timeline` force those labels onto the
 query before `limit` is applied; `/api/audit/events/:seq` hides records outside
 the scope. Spend charges from scoped ingest keys must also carry the configured
-labels.
+labels. Scoped reads on `/api/spend/budgets` and `/api/spend/status` return only
+label budgets inside the key's label scope, and status only counts charge records
+that carry the complete configured label scope.
 
 Routes that read or mutate server-held configuration, whole-ledger integrity, or
 module projections without tenant-filtered semantics require an unscoped key.
 This includes permissions policy routes, audit summary/verify/export, spend
-budgets/status, decision memory, evidence, vendor risk, forensics
+budget mutation, decision memory, evidence, vendor risk, forensics
 incident/cause-chain, and rollback planning/execution. Tenant-scoped projections
 should be added route by route once each module has an explicit tenant model.
 

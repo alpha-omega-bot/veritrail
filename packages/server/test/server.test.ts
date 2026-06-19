@@ -558,7 +558,7 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
-  it('enforces label scopes on spend charges and denies whole-spend projections', async () => {
+  it('enforces label scopes on spend charges and spend read projections', async () => {
     const scopedApp = await buildServer({
       logger: false,
       auth: {
@@ -605,6 +605,26 @@ describe('Veritrail HTTP server auth', () => {
           limit: { currency: 'USD', amountMinor: 1000 },
         }),
       });
+      await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/budgets',
+        headers: { authorization: 'Bearer spend-admin-secret-0001', ...json },
+        payload: body({
+          name: 'sibling tenant cap',
+          scope: { kind: 'label', value: 'tenant=other' },
+          limit: { currency: 'USD', amountMinor: 1000 },
+        }),
+      });
+      await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/budgets',
+        headers: { authorization: 'Bearer spend-admin-secret-0001', ...json },
+        payload: body({
+          name: 'global cap',
+          scope: { kind: 'global' },
+          limit: { currency: 'USD', amountMinor: 5000 },
+        }),
+      });
 
       const missingLabels = await scopedApp.inject({
         method: 'POST',
@@ -644,25 +664,51 @@ describe('Veritrail HTTP server auth', () => {
       });
       expect(allowed.statusCode).toBe(200);
 
+      const siblingProjectCharge = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/charge',
+        headers: { authorization: 'Bearer spend-admin-secret-0001', ...json },
+        payload: body({
+          actorId: 'tenant-agent',
+          amount: { currency: 'USD', amountMinor: 700 },
+          labels: { tenant: 'acme', project: 'beta' },
+        }),
+      });
+      expect(siblingProjectCharge.statusCode).toBe(200);
+
+      const otherTenantCharge = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/charge',
+        headers: { authorization: 'Bearer spend-admin-secret-0001', ...json },
+        payload: body({
+          actorId: 'tenant-agent',
+          amount: { currency: 'USD', amountMinor: 900 },
+          labels: { tenant: 'other', project: 'alpha' },
+        }),
+      });
+      expect(otherTenantCharge.statusCode).toBe(200);
+
       const scopedBudgets = await scopedApp.inject({
         method: 'GET',
         url: '/api/spend/budgets',
         headers: { authorization: 'Bearer tenant-spend-reader-secret-0001' },
       });
-      expect(scopedBudgets.statusCode).toBe(400);
-      expect(scopedBudgets.json()).toMatchObject({
-        error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
-      });
+      expect(scopedBudgets.statusCode).toBe(200);
+      expect(scopedBudgets.json()).toMatchObject([{ name: 'tenant cap' }]);
 
       const scopedStatus = await scopedApp.inject({
         method: 'GET',
         url: '/api/spend/status',
         headers: { authorization: 'Bearer tenant-spend-reader-secret-0001' },
       });
-      expect(scopedStatus.statusCode).toBe(400);
-      expect(scopedStatus.json()).toMatchObject({
-        error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
-      });
+      expect(scopedStatus.statusCode).toBe(200);
+      expect(scopedStatus.json()).toMatchObject([
+        {
+          budget: { name: 'tenant cap', scope: { kind: 'label', value: 'tenant=acme' } },
+          spent: { amountMinor: 100 },
+          remaining: { amountMinor: 900 },
+        },
+      ]);
 
       const unscopedStatus = await scopedApp.inject({
         method: 'GET',
@@ -670,7 +716,11 @@ describe('Veritrail HTTP server auth', () => {
         headers: { authorization: 'Bearer spend-reader-secret-0001' },
       });
       expect(unscopedStatus.statusCode).toBe(200);
-      expect(unscopedStatus.json()).toMatchObject([{ spent: { amountMinor: 100 } }]);
+      expect(unscopedStatus.json()).toMatchObject([
+        { budget: { name: 'tenant cap' }, spent: { amountMinor: 800 } },
+        { budget: { name: 'sibling tenant cap' }, spent: { amountMinor: 900 } },
+        { budget: { name: 'global cap' }, spent: { amountMinor: 1700 } },
+      ]);
     } finally {
       await scopedApp.close();
     }
@@ -851,14 +901,6 @@ describe('Veritrail HTTP server auth', () => {
           { name: 'tenant policy', effect: 'allow', match: { actionTypes: ['tool.*'] } },
         ],
         [
-          '/api/spend/budgets',
-          {
-            name: 'tenant budget',
-            scope: { kind: 'label', value: 'tenant=acme' },
-            limit: { currency: 'USD', amountMinor: 1000 },
-          },
-        ],
-        [
           '/api/vendors',
           {
             name: 'Tenant Vendor',
@@ -877,6 +919,21 @@ describe('Veritrail HTTP server auth', () => {
           error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
         });
       }
+
+      const budgetMutation = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/spend/budgets',
+        headers: scopedAdminHeaders,
+        payload: body({
+          name: 'tenant budget',
+          scope: { kind: 'label', value: 'tenant=acme' },
+          limit: { currency: 'USD', amountMinor: 1000 },
+        }),
+      });
+      expect(budgetMutation.statusCode).toBe(400);
+      expect(budgetMutation.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
+      });
 
       const deletePolicy = await scopedApp.inject({
         method: 'DELETE',

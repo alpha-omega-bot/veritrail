@@ -74,9 +74,9 @@ We use STRIDE as a checklist.
 - **I2 — Over-broad reads via the API.** _Mitigation:_ authZ + query scoping
   (Milestone 1). ✔ route-level API-key roles protect read APIs when auth is
   configured, and label-scoped keys force matching labels on raw ledger-query
-  reads. Label-scoped keys are denied on unpartitioned module projections until
-  tenant-filtered projection semantics exist. Full tenant isolation remains
-  future platform work.
+  reads and spend read projections. Label-scoped keys are denied on remaining
+  unpartitioned module projections until tenant-filtered projection semantics
+  exist. Full tenant isolation remains future platform work.
 
 ### Denial of service
 

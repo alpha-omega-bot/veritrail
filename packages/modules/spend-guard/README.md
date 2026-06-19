@@ -34,13 +34,14 @@ import {
 - `class SpendGuardModule implements VeritrailModule`
   - `setBudget(input: unknown): Result<Budget, VeritrailError>` — validate (Zod
     `BudgetSchema`) and upsert by `id`. An absent `id` is assigned `bud…`.
-  - `listBudgets(): Budget[]`
+  - `listBudgets(opts?: SpendProjectionOptions): Budget[]`
   - `authorize(input: AuthorizeInput): Promise<Result<void, VeritrailError>>`
   - `charge(input: AuthorizeInput): Promise<Result<LedgerRecord, VeritrailError>>`
-  - `status(): Promise<SpendStatus[]>`
+  - `status(opts?: SpendProjectionOptions): Promise<SpendStatus[]>`
 - `createSpendGuardModule(ctx: ModuleContext): SpendGuardModule`
 - `type SpendStatus = { budget; spent; remaining; exceeded }`
 - `type AuthorizeInput = { actorId; amount; labels?; actionId? }`
+- `type SpendProjectionOptions = { labelScope?: Record<string, string> }`
 
 Errors are returned, never thrown: `BUDGET_EXCEEDED` when a hard-stop budget
 would be breached, `VALIDATION` for malformed budgets or currency mismatches.
@@ -61,6 +62,13 @@ attributed to a budget by re-applying the **same** scope match used by
 `authorize`, so a single charge accrues against the `global` budget, the actor's
 budget, and every `label` budget whose label was present on the charge — all at
 once, with no double counting (the projection reads `budget.charged` only).
+
+`listBudgets({ labelScope })` and `status({ labelScope })` provide a read-only
+tenant/project projection for server-scoped operators. They include only
+label-scoped budgets whose `key=value` scope appears in `labelScope`; status also
+queries only `budget.charged` records carrying every configured label. For
+example, `{ tenant: 'acme', project: 'alpha' }` can see the `tenant=acme` budget,
+but the spend total excludes `tenant=acme, project=beta` charges.
 
 ## Example
 

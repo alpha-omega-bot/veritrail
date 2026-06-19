@@ -52,10 +52,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       transparency log.
 - [ ] **Server authN/authZ.** API-key auth, route roles/scopes, OIDC bearer JWTs
       with static JWKS plus discovery/JWKS refresh, label-scoped raw ledger
-      reads/writes and spend charges, signed administrative mutation requests,
-      ledger-recorded administrative policy/budget changes, and fail-closed
-      scoped access for unpartitioned module projections are implemented.
-      Remaining work: tenant-filtered projection semantics and broader policy
+      reads/writes, spend charges and spend read projections, signed
+      administrative mutation requests, ledger-recorded administrative
+      policy/budget changes, and fail-closed scoped access for unpartitioned
+      module projections are implemented. Remaining work: tenant-filtered
+      projection semantics for the remaining modules and broader policy
       composition. (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
@@ -172,6 +173,13 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-19** — Added tenant-filtered Spend Guard read projections. Scoped
+  `/api/spend/budgets` and `/api/spend/status` now return label budgets inside
+  the principal's label scope and count only charge records carrying the complete
+  configured scope, while budget mutation remains unscoped-only. **Next:**
+  continue tenant-filtered projection semantics for decision/evidence/vendor/
+  rollback routes, or continue P1 with PII encryption/retention or append
+  batching.
 - **2026-06-19** — Continued P1 server auth projection-tenancy semantics with a
   fail-closed boundary for unpartitioned module projections. Label-scoped
   principals can still use raw scoped ledger writes/reads and scoped spend

@@ -354,8 +354,8 @@ function registerRoutes(
   });
 
   // ---- spend guard ------------------------------------------------------
-  app.get('/api/spend/budgets', unscopedReadRoute(spendRead), async (_request, reply) =>
-    reply.send(spendGuard.listBudgets()),
+  app.get('/api/spend/budgets', readRoute(spendRead), async (request, reply) =>
+    reply.send(spendGuard.listBudgets(spendProjectionOptions(request.principal))),
   );
 
   app.post('/api/spend/budgets', unscopedWriteRoute(['admin']), async (request, reply) => {
@@ -383,8 +383,8 @@ function registerRoutes(
     return replyResult(reply, result);
   });
 
-  app.get('/api/spend/status', unscopedReadRoute(spendRead), async (_request, reply) =>
-    reply.send(await spendGuard.status()),
+  app.get('/api/spend/status', readRoute(spendRead), async (request, reply) =>
+    reply.send(await spendGuard.status(spendProjectionOptions(request.principal))),
   );
 
   app.post('/api/spend/charge', writeRoute(['ingest']), async (request, reply) => {
@@ -651,6 +651,13 @@ function labelsForPrincipalScope(
   }
 
   return { ok: true, value: undefined };
+}
+
+function spendProjectionOptions(
+  principal: ApiKeyPrincipal | undefined,
+): { labelScope?: Readonly<Record<string, string>> } | undefined {
+  const labelScope = principal?.labelScope;
+  return labelScope === undefined ? undefined : { labelScope };
 }
 
 function zodIssues(error: ZodError): JsonValue {
