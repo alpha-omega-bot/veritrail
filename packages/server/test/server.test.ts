@@ -676,6 +676,222 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('denies label-scoped principals on unpartitioned module projections', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'tenant-ingest',
+            actorId: 'tenant-agent',
+            secret: 'tenant-module-ingest-secret-0001',
+            roles: ['ingest'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-operator',
+            actorId: 'tenant-operator',
+            secret: 'tenant-module-operator-secret-0001',
+            roles: ['operator'],
+            scopes: [
+              'audit:read',
+              'permissions:read',
+              'decisions:read',
+              'evidence:read',
+              'vendor-risk:read',
+              'forensics:read',
+              'rollback:read',
+              'rollback:execute',
+            ],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-admin',
+            actorId: 'tenant-admin',
+            secret: 'tenant-module-admin-secret-0001',
+            roles: ['admin'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'module-admin-secret-0001',
+            roles: ['admin'],
+          },
+        ],
+      },
+    });
+    try {
+      const scopedIngestHeaders = {
+        authorization: 'Bearer tenant-module-ingest-secret-0001',
+        ...json,
+      };
+      const scopedOperatorHeaders = {
+        authorization: 'Bearer tenant-module-operator-secret-0001',
+        ...json,
+      };
+      const scopedAdminHeaders = {
+        authorization: 'Bearer tenant-module-admin-secret-0001',
+        ...json,
+      };
+
+      const rawAppend = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: scopedIngestHeaders,
+        payload: body({
+          type: 'note',
+          actorId: 'tenant-agent',
+          labels: { tenant: 'acme', project: 'alpha' },
+          payload: { text: 'scoped raw ledger write remains available' },
+        }),
+      });
+      expect(rawAppend.statusCode).toBe(201);
+
+      const rawRead = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/audit/events',
+        headers: scopedOperatorHeaders,
+      });
+      expect(rawRead.statusCode).toBe(200);
+      expect(rawRead.json()).toHaveLength(1);
+
+      const deniedReadRoutes = [
+        ['GET', '/api/permissions/policies'],
+        ['GET', '/api/audit/summary'],
+        ['GET', '/api/audit/verify'],
+        ['GET', '/api/audit/export'],
+        ['POST', '/api/permissions/evaluate'],
+        ['GET', '/api/decisions'],
+        ['GET', '/api/decisions/recall'],
+        ['GET', '/api/evidence'],
+        ['GET', '/api/evidence/evd-1/trace'],
+        ['POST', '/api/evidence/evd-1/verify'],
+        ['GET', '/api/vendors'],
+        ['GET', '/api/vendors/ven-1/signals'],
+        ['GET', '/api/vendor-risk/assess'],
+        ['GET', '/api/vendor-risk/ven-1/score'],
+        ['GET', '/api/forensics/incident?correlationId=run-1'],
+        ['GET', '/api/forensics/cause/action-1'],
+        ['POST', '/api/rollback/plan/action/action-1'],
+        ['GET', '/api/rollback/plan/correlation/run-1'],
+        ['POST', '/api/rollback/execute'],
+      ] as const;
+
+      for (const [method, url] of deniedReadRoutes) {
+        const res = await scopedApp.inject({
+          method,
+          url,
+          headers: scopedOperatorHeaders,
+          ...(method === 'POST'
+            ? {
+                payload: body({
+                  action: { id: 'action-1', actorId: 'tenant-agent', type: 'tool.search' },
+                  content: 'payload',
+                  plan: { steps: [], unreversible: [] },
+                }),
+              }
+            : {}),
+        });
+        expect(res.statusCode, `${method} ${url}`).toBe(400);
+        expect(res.json(), `${method} ${url}`).toMatchObject({
+          error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
+        });
+      }
+
+      const deniedIngestRoutes = [
+        [
+          '/api/permissions/enforce',
+          {
+            action: { id: 'action-1', actorId: 'tenant-agent', type: 'tool.search' },
+          },
+        ],
+        [
+          '/api/decisions',
+          {
+            actorId: 'tenant-agent',
+            summary: 'Use scoped module route',
+          },
+        ],
+        [
+          '/api/evidence',
+          {
+            actorId: 'tenant-agent',
+            kind: 'document',
+            summary: 'Evidence',
+          },
+        ],
+        [
+          '/api/vendors/signals',
+          {
+            vendorId: 'ven-1',
+            kind: 'incident',
+            severity: 'high',
+            summary: 'Incident',
+          },
+        ],
+      ] as const;
+
+      for (const [url, payload] of deniedIngestRoutes) {
+        const res = await scopedApp.inject({
+          method: 'POST',
+          url,
+          headers: scopedIngestHeaders,
+          payload: body(payload),
+        });
+        expect(res.statusCode, url).toBe(400);
+        expect(res.json(), url).toMatchObject({
+          error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
+        });
+      }
+
+      for (const [url, payload] of [
+        [
+          '/api/permissions/policies',
+          { name: 'tenant policy', effect: 'allow', match: { actionTypes: ['tool.*'] } },
+        ],
+        [
+          '/api/spend/budgets',
+          {
+            name: 'tenant budget',
+            scope: { kind: 'label', value: 'tenant=acme' },
+            limit: { currency: 'USD', amountMinor: 1000 },
+          },
+        ],
+        [
+          '/api/vendors',
+          {
+            name: 'Tenant Vendor',
+            category: 'api',
+          },
+        ],
+      ] as const) {
+        const res = await scopedApp.inject({
+          method: 'POST',
+          url,
+          headers: scopedAdminHeaders,
+          payload: body(payload),
+        });
+        expect(res.statusCode, url).toBe(400);
+        expect(res.json(), url).toMatchObject({
+          error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
+        });
+      }
+
+      const deletePolicy = await scopedApp.inject({
+        method: 'DELETE',
+        url: '/api/permissions/policies/pol-1',
+        headers: { authorization: 'Bearer tenant-module-admin-secret-0001' },
+      });
+      expect(deletePolicy.statusCode).toBe(400);
+      expect(deletePolicy.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
+      });
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('accepts OIDC bearer tokens with mapped route scopes and label scopes', async () => {
     const { privateKey, jwk } = oidcFixture();
     const oidcApp = await buildServer({
