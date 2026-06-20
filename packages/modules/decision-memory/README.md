@@ -53,7 +53,7 @@ class DecisionMemoryModule implements VeritrailModule {
     version: '0.1.0';
     capability: 'decision-memory';
   };
-  constructor(ctx: ModuleContext);
+  constructor(ctx: ModuleContext, config?: DecisionMemoryConfig);
   record(
     input: unknown,
     opts?: DecisionRecordOptions,
@@ -71,7 +71,19 @@ class DecisionMemoryModule implements VeritrailModule {
   recall(query: RecallQuery): Promise<DecisionMatch[]>;
 }
 
-function createDecisionMemoryModule(ctx: ModuleContext): DecisionMemoryModule;
+// Semantic recall: inject an embedding model (no model SDK is a runtime dep).
+interface EmbeddingProvider {
+  embed(texts: readonly string[]): Promise<number[][]>;
+}
+interface DecisionMemoryConfig {
+  embeddingProvider?: EmbeddingProvider;
+}
+// HashingEmbeddingProvider — dependency-free reference impl (hashing trick).
+
+function createDecisionMemoryModule(
+  ctx: ModuleContext,
+  config?: DecisionMemoryConfig,
+): DecisionMemoryModule;
 ```
 
 ### Outcome linkage
@@ -111,6 +123,25 @@ so a recent weaker match can outrank an old stronger one. The decay also applies
 to empty-text (pure recency) recall. Unset (or non-positive) leaves ranking
 purely lexical with recency only as a tie-break.
 
+#### Semantic recall
+
+Construct the module with `{ embeddingProvider }` to rank by **embedding cosine
+similarity** instead of lexical token overlap. On each `recall` with query text,
+the module makes one `embed` call (query + every candidate's searchable text) and
+scores each decision as `clamp(cosine(queryVec, docVec), 0, 1)`; the same recency
+factor still multiplies the score, and decisions scoring `0` are dropped. This
+finds paraphrases and synonyms that lexical overlap misses. If the provider
+throws or returns the wrong count, `recall` logs a warning and **falls back to
+lexical scoring** — it never hard-fails on the model. Empty-text recall stays
+pure recency and makes no provider call.
+
+`EmbeddingProvider` is a port, deliberately kept out of `@veritrail/core` so no
+model SDK becomes a runtime dependency (the same approach as `Signer` and
+`MonitorSource`). `HashingEmbeddingProvider` is a dependency-free reference impl
+(the hashing trick: tokens hashed into bucket counts) — reproducible and good for
+tests/local use, but it captures only hashed lexical overlap, not true synonymy.
+Inject a real embedding model in production.
+
 When `labels` are supplied, `list`, `get`, and `recall` only project
 `decision.recorded` events whose ledger envelope carries every requested
 key/value pair. This is used by the HTTP server for label-scoped tenant views.
@@ -137,5 +168,8 @@ const hits = await memory.recall({ text: 'database consistency' });
 
 ## Phase 1 TODO
 
-- **Vector / semantic recall via embeddings** — replace token overlap with
-  embedding similarity so paraphrases and synonyms match.
+- **Vector / semantic recall via embeddings** — the `EmbeddingProvider` port and
+  cosine-similarity ranking are implemented (with a dependency-free
+  `HashingEmbeddingProvider` reference impl). Remaining: a concrete networked
+  embedding-model adapter, which is deployment-supplied (analogous to
+  `@veritrail/provider-signers` for `Signer`).

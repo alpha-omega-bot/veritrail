@@ -11,7 +11,12 @@ import {
   type ModuleContext,
 } from '@veritrail/core';
 
-import { createDecisionMemoryModule, type DecisionMemoryModule } from '../src/index.js';
+import {
+  createDecisionMemoryModule,
+  HashingEmbeddingProvider,
+  type DecisionMemoryModule,
+  type EmbeddingProvider,
+} from '../src/index.js';
 
 /** Build a deterministic module + ledger for a test. */
 function build(): { module: DecisionMemoryModule; ledger: Ledger; ctx: ModuleContext } {
@@ -537,5 +542,125 @@ describe('recall recency weighting', () => {
 
     const matches = await module.recall({ text: 'database engine', recencyHalfLifeMs: 0 });
     expect(matches[0]?.score).toBeCloseTo(1, 10); // no decay applied.
+  });
+});
+
+describe('recall semantic (EmbeddingProvider)', () => {
+  const DAY = 86_400_000;
+
+  /** Module + shared clock + an injected embedding provider. */
+  function buildWith(provider: EmbeddingProvider): {
+    module: DecisionMemoryModule;
+    clock: FixedClock;
+  } {
+    const clock = new FixedClock(1_700_000_000_000);
+    const ledger = createInMemoryLedger({ clock, ids: new SequentialIdGenerator() });
+    const ctx: ModuleContext = {
+      ledger,
+      clock,
+      ids: new SequentialIdGenerator(),
+      logger: noopLogger,
+    };
+    return { module: createDecisionMemoryModule(ctx, { embeddingProvider: provider }), clock };
+  }
+
+  it('ranks by embedding cosine, overriding lexical token overlap', async () => {
+    // Provider treats the query as aligned with the 'zzz' decision (which shares
+    // NO tokens with it) and orthogonal to the 'alpha' decision (which DOES).
+    const provider: EmbeddingProvider = {
+      embed: async (texts) =>
+        texts.map((t) => {
+          if (t === 'alpha') return [1, 0]; // the query text, matched exactly
+          if (t.includes('zzz')) return [1, 0]; // semantically aligned, no token overlap
+          if (t.includes('alpha')) return [0, 1]; // shares the query token, but orthogonal
+          return [0, 0];
+        }),
+    };
+    const { module } = buildWith(provider);
+    await module.record({ id: 'dec_lex', actorId: 'a', summary: 'alpha' });
+    await module.record({ id: 'dec_sem', actorId: 'a', summary: 'zzz' });
+
+    const matches = await module.recall({ text: 'alpha' });
+    // Lexical recall would rank dec_lex first; semantic recall returns only the
+    // cosine-aligned dec_sem (dec_lex scores 0 → dropped).
+    expect(matches.map((m) => m.decision.id)).toEqual(['dec_sem']);
+    expect(matches[0]?.score).toBeCloseTo(1, 10);
+  });
+
+  it('still multiplies semantic scores by recency decay', async () => {
+    // Both decisions are equally similar to the query (cosine 1); recency breaks it.
+    const provider: EmbeddingProvider = { embed: async (texts) => texts.map(() => [1, 0]) };
+    const { module, clock } = buildWith(provider);
+    await module.record({ id: 'dec_old', actorId: 'a', summary: 'old' });
+    clock.advance(30 * DAY);
+    await module.record({ id: 'dec_new', actorId: 'a', summary: 'new' });
+
+    const matches = await module.recall({ text: 'q', recencyHalfLifeMs: 30 * DAY });
+    expect(matches.map((m) => m.decision.id)).toEqual(['dec_new', 'dec_old']);
+    // dec_new: cosine 1 * decay(0) = 1; dec_old: 1 * 0.5^(30/30) = 0.5.
+    expect(matches[0]?.score).toBeCloseTo(1, 10);
+    expect(matches[1]?.score).toBeCloseTo(0.5, 10);
+  });
+
+  it('falls back to lexical recall when the provider throws (no hard fail)', async () => {
+    const provider: EmbeddingProvider = {
+      embed: async () => {
+        throw new Error('model unavailable');
+      },
+    };
+    const { module } = buildWith(provider);
+    await module.record({ id: 'dec_db', actorId: 'a', summary: 'database engine choice' });
+    await module.record({ id: 'dec_css', actorId: 'a', summary: 'css framework' });
+
+    // Does not throw; lexical scoring still ranks the keyword-relevant decision.
+    const matches = await module.recall({ text: 'database engine' });
+    expect(matches[0]?.decision.id).toBe('dec_db');
+  });
+
+  it('does not call the provider for empty-text (recency) recall', async () => {
+    let called = false;
+    const provider: EmbeddingProvider = {
+      embed: async (texts) => {
+        called = true;
+        return texts.map(() => [1, 0]);
+      },
+    };
+    const { module } = buildWith(provider);
+    await module.record({ id: 'dec_a', actorId: 'a', summary: 'one' });
+    await module.record({ id: 'dec_b', actorId: 'a', summary: 'two' });
+
+    const matches = await module.recall({ text: '' });
+    expect(matches.map((m) => m.decision.id)).toEqual(['dec_b', 'dec_a']);
+    expect(called).toBe(false);
+  });
+});
+
+describe('HashingEmbeddingProvider', () => {
+  it('produces deterministic, equal-length vectors and ranks overlapping text', async () => {
+    const provider = new HashingEmbeddingProvider(64);
+    const clock = new FixedClock(1_700_000_000_000);
+    const ledger = createInMemoryLedger({ clock, ids: new SequentialIdGenerator() });
+    const ctx: ModuleContext = {
+      ledger,
+      clock,
+      ids: new SequentialIdGenerator(),
+      logger: noopLogger,
+    };
+    const module = createDecisionMemoryModule(ctx, { embeddingProvider: provider });
+
+    await module.record({ id: 'dec_db', actorId: 'a', summary: 'database engine selection' });
+    await module.record({ id: 'dec_ui', actorId: 'a', summary: 'frontend colour palette' });
+
+    const matches = await module.recall({ text: 'database engine' });
+    expect(matches[0]?.decision.id).toBe('dec_db');
+
+    // Deterministic + fixed length.
+    const [a, b] = await provider.embed(['same text', 'same text']);
+    expect(a).toEqual(b);
+    expect(a).toHaveLength(64);
+  });
+
+  it('rejects a non-positive dimension', () => {
+    expect(() => new HashingEmbeddingProvider(0)).toThrow();
   });
 });
