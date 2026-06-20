@@ -11,9 +11,10 @@ the ledger remains the system of record.
 
 - **Attach** validated evidence (document, observation, tool output, citation,
   dataset, artifact) as ledger events, with an optional SHA-256 `contentHash`
-  for integrity-over-time.
+  for integrity-over-time. Optional record labels are written to the ledger
+  envelope for tenant/project-scoped projections.
 - **Project** all attached evidence (`list`, `get`) from `evidence.attached`
-  events.
+  events, optionally filtered by exact ledger labels.
 - **Trace** provenance: from a root piece of evidence, walk `links.evidenceIds`
   as `derived_from` edges (depth-first) to build a `ProvenanceGraph`. Includes a
   cycle guard and a depth cap of 100.
@@ -44,11 +45,24 @@ interface ProvenanceGraph {
 class EvidenceModule implements VeritrailModule {
   readonly info: { name: '@veritrail/evidence'; version: '0.1.0'; capability: 'evidence' };
   constructor(ctx: ModuleContext);
-  attach(input: unknown): Promise<Result<LedgerRecord, VeritrailError>>;
-  list(): Promise<Evidence[]>;
-  get(evidenceId: string): Promise<Evidence | null>;
-  trace(evidenceId: string): Promise<Result<ProvenanceGraph, VeritrailError>>;
-  verifyContent(evidenceId: string, content: string): Promise<Result<boolean, VeritrailError>>;
+  attach(
+    input: unknown,
+    opts?: { labels?: Readonly<Record<string, string>> },
+  ): Promise<Result<LedgerRecord, VeritrailError>>;
+  list(opts?: { labels?: Readonly<Record<string, string>> }): Promise<Evidence[]>;
+  get(
+    evidenceId: string,
+    opts?: { labels?: Readonly<Record<string, string>> },
+  ): Promise<Evidence | null>;
+  trace(
+    evidenceId: string,
+    opts?: { labels?: Readonly<Record<string, string>> },
+  ): Promise<Result<ProvenanceGraph, VeritrailError>>;
+  verifyContent(
+    evidenceId: string,
+    content: string,
+    opts?: { labels?: Readonly<Record<string, string>> },
+  ): Promise<Result<boolean, VeritrailError>>;
 }
 
 function createEvidenceModule(ctx: ModuleContext): EvidenceModule;
@@ -57,6 +71,10 @@ function createEvidenceModule(ctx: ModuleContext): EvidenceModule;
 `attach` expects an object carrying the ledger envelope's `actorId` (required)
 and optional `correlationId`, plus the evidence body. The evidence is validated
 with `EvidenceSchema`; an `id` is assigned via `ctx.ids.next('evd')` when absent.
+When `labels` are supplied, `list`, `get`, `trace`, and `verifyContent` only
+project `evidence.attached` events whose ledger envelope carries every requested
+key/value pair. Trace edges to out-of-scope upstream evidence remain visible as
+dangling references, but the out-of-scope evidence is not loaded as a node.
 
 Failures are returned as `Result` (`VALIDATION` for bad input, `NOT_FOUND` for
 missing evidence or a missing `contentHash`) — never thrown.

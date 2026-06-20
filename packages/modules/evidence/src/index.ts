@@ -16,6 +16,7 @@
 import type {
   Evidence,
   EvidenceKind,
+  EventQuery,
   LedgerRecord,
   ModuleContext,
   Result,
@@ -57,6 +58,18 @@ export interface ProvenanceGraph {
   readonly edges: ProvenanceEdge[];
 }
 
+/** Optional ledger envelope values for attached evidence facts. */
+export interface EvidenceAttachOptions {
+  /** Labels to write onto the `evidence.attached` event envelope. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Optional projection filters for evidence reads. */
+export interface EvidenceProjectionOptions {
+  /** Restrict reads to evidence records carrying these exact ledger labels. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
 /**
  * Evidence Tracing engine. Reads (and, via {@link EvidenceModule.attach},
  * appends to) the shared ledger.
@@ -80,7 +93,10 @@ export class EvidenceModule implements VeritrailModule {
    * absent. The caller supplies the ledger envelope's `actorId` (required) and
    * an optional `correlationId` alongside the evidence body.
    */
-  async attach(input: unknown): Promise<Result<LedgerRecord, VeritrailError>> {
+  async attach(
+    input: unknown,
+    opts?: EvidenceAttachOptions,
+  ): Promise<Result<LedgerRecord, VeritrailError>> {
     if (typeof input !== 'object' || input === null) {
       return err(validationError('evidence attach input must be an object'));
     }
@@ -118,13 +134,14 @@ export class EvidenceModule implements VeritrailModule {
       type: 'evidence.attached',
       actorId,
       ...(typeof correlationId === 'string' ? { correlationId } : {}),
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
       payload: { evidence },
     });
   }
 
   /** Project all attached evidence from the ledger, in attachment order. */
-  async list(): Promise<Evidence[]> {
-    const records = await this.#ctx.ledger.query({ types: ['evidence.attached'] });
+  async list(opts?: EvidenceProjectionOptions): Promise<Evidence[]> {
+    const records = await this.#ctx.ledger.query(evidenceQuery(opts));
     const out: Evidence[] = [];
     for (const record of records) {
       const evidence = extractEvidence(record);
@@ -137,8 +154,8 @@ export class EvidenceModule implements VeritrailModule {
    * Look up a single piece of evidence by id. Returns the most recent
    * attachment for that id, or `null` when none exists.
    */
-  async get(evidenceId: string): Promise<Evidence | null> {
-    const all = await this.list();
+  async get(evidenceId: string, opts?: EvidenceProjectionOptions): Promise<Evidence | null> {
+    const all = await this.list(opts);
     let found: Evidence | null = null;
     for (const evidence of all) {
       if (evidence.id === evidenceId) found = evidence;
@@ -155,9 +172,12 @@ export class EvidenceModule implements VeritrailModule {
    * when the root evidence does not exist. Dangling upstream references (ids
    * with no matching evidence) are silently skipped — they are not nodes.
    */
-  async trace(evidenceId: string): Promise<Result<ProvenanceGraph, VeritrailError>> {
+  async trace(
+    evidenceId: string,
+    opts?: EvidenceProjectionOptions,
+  ): Promise<Result<ProvenanceGraph, VeritrailError>> {
     const byId = new Map<string, Evidence>();
-    for (const evidence of await this.list()) {
+    for (const evidence of await this.list(opts)) {
       byId.set(evidence.id, evidence);
     }
 
@@ -207,8 +227,9 @@ export class EvidenceModule implements VeritrailModule {
   async verifyContent(
     evidenceId: string,
     content: string,
+    opts?: EvidenceProjectionOptions,
   ): Promise<Result<boolean, VeritrailError>> {
-    const evidence = await this.get(evidenceId);
+    const evidence = await this.get(evidenceId, opts);
     if (!evidence) {
       return err(notFoundError(`evidence not found: ${evidenceId}`, { evidenceId }));
     }
@@ -222,6 +243,14 @@ export class EvidenceModule implements VeritrailModule {
 /** Construct an {@link EvidenceModule} from a {@link ModuleContext}. */
 export function createEvidenceModule(ctx: ModuleContext): EvidenceModule {
   return new EvidenceModule(ctx);
+}
+
+/** Build the ledger query used by evidence projections. */
+function evidenceQuery(opts?: EvidenceProjectionOptions): EventQuery {
+  return {
+    types: ['evidence.attached'],
+    ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+  };
 }
 
 /** Pull the `evidence` payload out of an `evidence.attached` record. */

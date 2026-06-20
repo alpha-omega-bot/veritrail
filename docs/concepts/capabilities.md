@@ -236,22 +236,36 @@ against the stored `contentHash` to prove it has not changed.
 
 ```ts
 class EvidenceModule {
-  attach(input: unknown): Promise<Result<LedgerRecord, VeritrailError>>; // mints `evd…` id
-  list(): Promise<Evidence[]>;
-  get(evidenceId: string): Promise<Evidence | null>; // latest by id
-  trace(evidenceId: string): Promise<Result<ProvenanceGraph, VeritrailError>>;
-  verifyContent(evidenceId: string, content: string): Promise<Result<boolean, VeritrailError>>;
+  attach(
+    input: unknown,
+    opts?: { labels?: Record<string, string> },
+  ): Promise<Result<LedgerRecord, VeritrailError>>; // mints `evd…` id
+  list(opts?: { labels?: Record<string, string> }): Promise<Evidence[]>;
+  get(evidenceId: string, opts?: { labels?: Record<string, string> }): Promise<Evidence | null>; // latest by id
+  trace(
+    evidenceId: string,
+    opts?: { labels?: Record<string, string> },
+  ): Promise<Result<ProvenanceGraph, VeritrailError>>;
+  verifyContent(
+    evidenceId: string,
+    content: string,
+    opts?: { labels?: Record<string, string> },
+  ): Promise<Result<boolean, VeritrailError>>;
 }
 function createEvidenceModule(ctx: ModuleContext): EvidenceModule;
 ```
 
 `attach` separates the ledger envelope's `actorId` (required) and optional
 `correlationId` from the evidence body before validating against the strict
-`EvidenceSchema`. `trace` is depth-first with a `visited` cycle guard and a depth
-cap of 100; it returns `NOT_FOUND` for an unknown root, records edges even to
-dangling upstream ids (intent stays visible) but does not create nodes for them.
-`verifyContent` returns `NOT_FOUND` when the evidence is missing or has no
-`contentHash`, else `ok(sha256Hex(content) === contentHash)`.
+`EvidenceSchema`. Optional record labels are written to the ledger envelope;
+optional read labels restrict `list`, `get`, `trace`, and `verifyContent` to
+`evidence.attached` records carrying every requested key/value pair. `trace` is
+depth-first with a `visited` cycle guard and a depth cap of 100; it returns
+`NOT_FOUND` for an unknown root, records edges even to dangling or out-of-scope
+upstream ids (intent stays visible) but does not create nodes for them.
+`verifyContent` returns `NOT_FOUND` when the evidence is missing, hidden by the
+label projection, or has no `contentHash`, else
+`ok(sha256Hex(content) === contentHash)`.
 
 ---
 

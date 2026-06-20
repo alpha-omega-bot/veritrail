@@ -55,8 +55,9 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       reads/writes, spend charges and spend read projections, signed
       administrative mutation requests, ledger-recorded administrative
       policy/budget changes, Decision Memory writes/read projections, and
-      fail-closed scoped access for unpartitioned module projections are
-      implemented. Remaining work: tenant-filtered
+      Evidence writes/read projections, and fail-closed scoped access for
+      unpartitioned module projections are implemented. Remaining work:
+      tenant-filtered
       projection semantics for the remaining modules and broader policy
       composition. (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
@@ -174,6 +175,16 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-20** — Continued P1 server auth projection-tenancy semantics with
+  Evidence. Scoped `/api/evidence` writes now stamp the principal's label scope
+  onto `evidence.attached` facts, while scoped evidence list, trace, and content
+  verification project only evidence carrying that complete scope. Trace edges
+  to out-of-scope upstream ids remain visible as dangling provenance references,
+  but the out-of-scope evidence is not loaded. Vendor risk, forensics
+  incident/cause-chain, and rollback remain fail-closed for scoped principals
+  until their tenant semantics are explicit. **Next:** continue tenant-filtered
+  projection semantics for vendor/rollback, or continue P1 with PII
+  encryption/retention or append batching.
 - **2026-06-20** — Continued P1 server auth projection-tenancy semantics with
   Decision Memory. Scoped `/api/decisions` writes now stamp the principal's label
   scope onto `decision.recorded` facts, while scoped `/api/decisions` and

@@ -53,9 +53,9 @@ We use STRIDE as a checklist.
 - **S1 — Impersonate an actor/operator.** _Mitigation:_ server authN + per-actor
   scoping. ✔ API-key auth with route roles, optional route scopes, and
   label-scoped raw event write / ledger-query read constraints, spend read
-  projections, and Decision Memory projections are implemented for the HTTP
-  server. Label-scoped principals fail closed on module projection routes that do
-  not yet have tenant-filtered semantics. Administrative
+  projections, Decision Memory projections, and Evidence projections are
+  implemented for the HTTP server. Label-scoped principals fail closed on module
+  projection routes that do not yet have tenant-filtered semantics. Administrative
   policy/budget mutations can also require signed HMAC request intent with
   timestamp freshness and nonce replay checks. Tenant-filtered projections and
   full multi-tenant isolation remain future platform work.
@@ -75,10 +75,10 @@ We use STRIDE as a checklist.
 - **I2 — Over-broad reads via the API.** _Mitigation:_ authZ + query scoping
   (Milestone 1). ✔ route-level API-key roles protect read APIs when auth is
   configured, and label-scoped keys force matching labels on raw ledger-query
-  reads, spend read projections, and Decision Memory read projections.
-  Label-scoped keys are denied on remaining unpartitioned module projections
-  until tenant-filtered projection semantics exist. Full tenant isolation remains
-  future platform work.
+  reads, spend read projections, Decision Memory read projections, and Evidence
+  read projections. Label-scoped keys are denied on remaining unpartitioned
+  module projections until tenant-filtered projection semantics exist. Full
+  tenant isolation remains future platform work.
 
 ### Denial of service
 

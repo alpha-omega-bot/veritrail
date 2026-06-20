@@ -12,6 +12,7 @@ import {
   asJson,
   createInMemoryLedger,
   hashJson,
+  sha256Hex,
   storageError,
   type LedgerRecord,
 } from '@veritrail/core';
@@ -870,6 +871,180 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('enforces label scopes on evidence writes and evidence read projections', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'tenant-ingest',
+            actorId: 'tenant-agent',
+            secret: 'tenant-evidence-ingest-secret-0001',
+            roles: ['ingest'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-evidence-reader',
+            actorId: 'tenant-operator',
+            secret: 'tenant-evidence-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['evidence:read'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'operator',
+            actorId: 'operator-1',
+            secret: 'evidence-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['evidence:read'],
+          },
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'evidence-admin-secret-0001',
+            roles: ['admin'],
+          },
+        ],
+      },
+    });
+    try {
+      const content = 'alpha evidence content';
+      const scopedSource = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/evidence',
+        headers: { authorization: 'Bearer tenant-evidence-ingest-secret-0001', ...json },
+        payload: body({
+          id: 'evd-alpha-source',
+          actorId: 'tenant-agent',
+          kind: 'document',
+          summary: 'Alpha source',
+          contentHash: sha256Hex(content),
+        }),
+      });
+      expect(scopedSource.statusCode).toBe(200);
+
+      const scopedClaim = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/evidence',
+        headers: { authorization: 'Bearer tenant-evidence-ingest-secret-0001', ...json },
+        payload: body({
+          id: 'evd-alpha-claim',
+          actorId: 'tenant-agent',
+          kind: 'citation',
+          summary: 'Alpha claim',
+          links: { evidenceIds: ['evd-alpha-source', 'evd-beta-source'] },
+        }),
+      });
+      expect(scopedClaim.statusCode).toBe(200);
+
+      const siblingProject = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: { authorization: 'Bearer evidence-admin-secret-0001', ...json },
+        payload: body({
+          type: 'evidence.attached',
+          actorId: 'tenant-agent',
+          labels: { tenant: 'acme', project: 'beta' },
+          payload: {
+            evidence: {
+              id: 'evd-beta-source',
+              kind: 'document',
+              summary: 'Beta source',
+              contentHash: sha256Hex('beta content'),
+            },
+          },
+        }),
+      });
+      expect(siblingProject.statusCode).toBe(201);
+
+      const otherTenant = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: { authorization: 'Bearer evidence-admin-secret-0001', ...json },
+        payload: body({
+          type: 'evidence.attached',
+          actorId: 'tenant-agent',
+          labels: { tenant: 'other', project: 'alpha' },
+          payload: {
+            evidence: {
+              id: 'evd-other-source',
+              kind: 'document',
+              summary: 'Other source',
+            },
+          },
+        }),
+      });
+      expect(otherTenant.statusCode).toBe(201);
+
+      const scopedList = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/evidence',
+        headers: { authorization: 'Bearer tenant-evidence-reader-secret-0001' },
+      });
+      expect(scopedList.statusCode).toBe(200);
+      expect((scopedList.json() as Array<{ id: string }>).map((item) => item.id)).toEqual([
+        'evd-alpha-source',
+        'evd-alpha-claim',
+      ]);
+
+      const scopedTrace = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/evidence/evd-alpha-claim/trace',
+        headers: { authorization: 'Bearer tenant-evidence-reader-secret-0001' },
+      });
+      expect(scopedTrace.statusCode).toBe(200);
+      expect(
+        (scopedTrace.json() as { nodes: Array<{ id: string }> }).nodes
+          .map((node) => node.id)
+          .sort(),
+      ).toEqual(['evd-alpha-claim', 'evd-alpha-source']);
+      expect(
+        (scopedTrace.json() as { edges: Array<{ from: string; to: string }> }).edges
+          .map((edge) => `${edge.from}->${edge.to}`)
+          .sort(),
+      ).toEqual(['evd-alpha-claim->evd-alpha-source', 'evd-alpha-claim->evd-beta-source']);
+
+      const hiddenTrace = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/evidence/evd-beta-source/trace',
+        headers: { authorization: 'Bearer tenant-evidence-reader-secret-0001' },
+      });
+      expect(hiddenTrace.statusCode).toBe(404);
+
+      const verifyVisible = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/evidence/evd-alpha-source/verify',
+        headers: { authorization: 'Bearer tenant-evidence-reader-secret-0001', ...json },
+        payload: body({ content }),
+      });
+      expect(verifyVisible.statusCode).toBe(200);
+      expect(verifyVisible.json()).toBe(true);
+
+      const verifyHidden = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/evidence/evd-beta-source/verify',
+        headers: { authorization: 'Bearer tenant-evidence-reader-secret-0001', ...json },
+        payload: body({ content: 'beta content' }),
+      });
+      expect(verifyHidden.statusCode).toBe(404);
+
+      const unscopedList = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/evidence',
+        headers: { authorization: 'Bearer evidence-reader-secret-0001' },
+      });
+      expect(unscopedList.statusCode).toBe(200);
+      expect((unscopedList.json() as Array<{ id: string }>).map((item) => item.id)).toEqual([
+        'evd-alpha-source',
+        'evd-alpha-claim',
+        'evd-beta-source',
+        'evd-other-source',
+      ]);
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('denies label-scoped principals on unpartitioned module projections', async () => {
     const scopedApp = await buildServer({
       logger: false,
@@ -890,7 +1065,6 @@ describe('Veritrail HTTP server auth', () => {
             scopes: [
               'audit:read',
               'permissions:read',
-              'evidence:read',
               'vendor-risk:read',
               'forensics:read',
               'rollback:read',
@@ -955,9 +1129,6 @@ describe('Veritrail HTTP server auth', () => {
         ['GET', '/api/audit/verify'],
         ['GET', '/api/audit/export'],
         ['POST', '/api/permissions/evaluate'],
-        ['GET', '/api/evidence'],
-        ['GET', '/api/evidence/evd-1/trace'],
-        ['POST', '/api/evidence/evd-1/verify'],
         ['GET', '/api/vendors'],
         ['GET', '/api/vendors/ven-1/signals'],
         ['GET', '/api/vendor-risk/assess'],
@@ -995,14 +1166,6 @@ describe('Veritrail HTTP server auth', () => {
           '/api/permissions/enforce',
           {
             action: { id: 'action-1', actorId: 'tenant-agent', type: 'tool.search' },
-          },
-        ],
-        [
-          '/api/evidence',
-          {
-            actorId: 'tenant-agent',
-            kind: 'document',
-            summary: 'Evidence',
           },
         ],
         [
