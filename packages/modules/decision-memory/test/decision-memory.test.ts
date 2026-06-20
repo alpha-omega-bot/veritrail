@@ -201,6 +201,134 @@ describe('get', () => {
   });
 });
 
+describe('outcomesFor', () => {
+  /** Append an action lifecycle event directly to the ledger. */
+  async function action(
+    ledger: Ledger,
+    type: 'action.executed' | 'action.failed' | 'action.denied' | 'action.rolled_back',
+    actionId: string,
+    labels?: Record<string, string>,
+  ): Promise<void> {
+    const payload =
+      type === 'action.failed'
+        ? { actionId, error: 'boom' }
+        : type === 'action.executed'
+          ? { actionId, outcome: 'success' as const }
+          : { actionId };
+    const res = await ledger.append({
+      type,
+      actorId: 'agent-1',
+      ...(labels !== undefined ? { labels } : {}),
+      payload,
+    });
+    expect(isOk(res)).toBe(true);
+  }
+
+  it('returns NOT_FOUND for an unknown decision', async () => {
+    const { module } = build();
+    const res = await module.outcomesFor('dec_missing');
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('NOT_FOUND');
+  });
+
+  it('reports no_actions when the decision relates to no actions', async () => {
+    const { module } = build();
+    await module.record({ id: 'dec_1', actorId: 'a', summary: 'standalone' });
+    const res = await module.outcomesFor('dec_1');
+    expect(isOk(res)).toBe(true);
+    if (isOk(res)) {
+      expect(res.value.actions).toEqual([]);
+      expect(res.value.verdict).toBe('no_actions');
+    }
+  });
+
+  it('verdict is effective when every related action succeeded', async () => {
+    const { module, ledger } = build();
+    await module.record({
+      id: 'dec_1',
+      actorId: 'a',
+      summary: 'ship it',
+      relatedActionIds: ['act-1', 'act-2'],
+    });
+    await action(ledger, 'action.executed', 'act-1');
+    await action(ledger, 'action.executed', 'act-2');
+
+    const res = await module.outcomesFor('dec_1');
+    if (!isOk(res)) throw new Error('expected ok');
+    expect(res.value.actions).toEqual([
+      { actionId: 'act-1', outcome: 'succeeded' },
+      { actionId: 'act-2', outcome: 'succeeded' },
+    ]);
+    expect(res.value.verdict).toBe('effective');
+  });
+
+  it('verdict is failed when an action went bad and none succeeded', async () => {
+    const { module, ledger } = build();
+    await module.record({ id: 'dec_1', actorId: 'a', summary: 'x', relatedActionIds: ['act-1'] });
+    await action(ledger, 'action.failed', 'act-1');
+    const res = await module.outcomesFor('dec_1');
+    if (!isOk(res)) throw new Error('expected ok');
+    expect(res.value.actions[0]?.outcome).toBe('failed');
+    expect(res.value.verdict).toBe('failed');
+  });
+
+  it('verdict is mixed when some actions succeeded and some did not', async () => {
+    const { module, ledger } = build();
+    await module.record({
+      id: 'dec_1',
+      actorId: 'a',
+      summary: 'x',
+      relatedActionIds: ['act-ok', 'act-bad'],
+    });
+    await action(ledger, 'action.executed', 'act-ok');
+    await action(ledger, 'action.denied', 'act-bad');
+    const res = await module.outcomesFor('dec_1');
+    if (!isOk(res)) throw new Error('expected ok');
+    expect(res.value.verdict).toBe('mixed');
+  });
+
+  it('treats an action with no terminal event as pending', async () => {
+    const { module } = build();
+    await module.record({ id: 'dec_1', actorId: 'a', summary: 'x', relatedActionIds: ['act-1'] });
+    const res = await module.outcomesFor('dec_1');
+    if (!isOk(res)) throw new Error('expected ok');
+    expect(res.value.actions[0]?.outcome).toBe('pending');
+    expect(res.value.verdict).toBe('pending');
+  });
+
+  it('a later rolled_back overrides an earlier executed', async () => {
+    const { module, ledger } = build();
+    await module.record({ id: 'dec_1', actorId: 'a', summary: 'x', relatedActionIds: ['act-1'] });
+    await action(ledger, 'action.executed', 'act-1');
+    await action(ledger, 'action.rolled_back', 'act-1');
+    const res = await module.outcomesFor('dec_1');
+    if (!isOk(res)) throw new Error('expected ok');
+    expect(res.value.actions[0]?.outcome).toBe('rolled_back');
+    expect(res.value.verdict).toBe('failed');
+  });
+
+  it('only counts action events inside the ledger-label scope', async () => {
+    const { module, ledger } = build();
+    const acme = { tenant: 'acme', project: 'alpha' };
+    await module.record(
+      { id: 'dec_1', actorId: 'a', summary: 'x', relatedActionIds: ['act-1'] },
+      { labels: acme },
+    );
+    // The action's success is recorded under a DIFFERENT tenant.
+    await action(ledger, 'action.executed', 'act-1', { tenant: 'other', project: 'alpha' });
+
+    const scoped = await module.outcomesFor('dec_1', { labels: acme });
+    if (!isOk(scoped)) throw new Error('expected ok');
+    // Out-of-scope success is invisible → pending under the acme scope.
+    expect(scoped.value.actions[0]?.outcome).toBe('pending');
+
+    // Unscoped sees the success.
+    const all = await module.outcomesFor('dec_1');
+    if (!isOk(all)) throw new Error('expected ok');
+    expect(all.value.actions[0]?.outcome).toBe('succeeded');
+  });
+});
+
 describe('recall', () => {
   it('ranks a keyword-relevant decision above an unrelated one', async () => {
     const { module } = build();

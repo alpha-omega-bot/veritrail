@@ -117,8 +117,8 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### decision-memory
 
-- [ ] Semantic recall via embeddings; outcome linkage (did the decision work?).
-      (recency/decay weighting done — see below)
+- [ ] Semantic recall via embeddings. (recency/decay weighting + outcome linkage
+      done — see below; embeddings remain, needs a dependency decision)
 - [x] `recall` score denominator uses distinct-token set size, diverging from the
       documented `sharedTokens / queryTokens` for repeated tokens; and negative
       `limit` in `list()` returns ALL — clamp/validate. Fixed: `list()` and
@@ -201,6 +201,22 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added decision-memory outcome linkage (M2 feature-depth). New
+  `outcomesFor(decisionId, opts?)` answers "did the decision work?": it looks up
+  the decision, classifies each `relatedActionId` by replaying its action
+  lifecycle events into a terminal `ActionOutcome` (`succeeded` | `failed` |
+  `denied` | `rolled_back` | `pending`; latest terminal event wins, so a
+  `rolled_back` after an `executed` reads as rolled back), and rolls those into a
+  `DecisionVerdict` (`no_actions` | `pending` | `effective` | `failed` | `mixed`).
+  `relatedActionIds` already exists on `DecisionSchema`, so pure projection — no
+  schema change, no new dep. Tenant-scoped (out-of-scope action events read as
+  pending). Returns `NOT_FOUND` for an unknown decision. Cleared the outcome-linkage
+  Phase 1 TODO. **All contained decision-memory GA work is now done; only
+  embeddings-based semantic recall remains (needs a dependency decision).**
+  **Next:** remaining contained items — forensics anomaly/snapshot/bundles,
+  evidence large-graph pagination, vendor-risk SLA tracking (needs a `VendorSchema`
+  change so slightly heavier).
 
 - **2026-06-20** — Added evidence decision↔evidence cross-linking (M2
   feature-depth). New `evidenceForDecision(decisionId, opts?)` projects every
