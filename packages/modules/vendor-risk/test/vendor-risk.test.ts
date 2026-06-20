@@ -306,3 +306,62 @@ describe('bandFor thresholds', () => {
     expect(bandFor(100)).toBe('critical');
   });
 });
+
+describe('tenant label scoping', () => {
+  it('writes optional ledger labels onto vendor and signal facts', async () => {
+    const { module, ctx } = setup();
+    const reg = await module.register(
+      { id: 'ven_1', name: 'Acme', category: 'api' },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    expect(reg.ok).toBe(true);
+    const sig = await module.recordSignal(
+      { vendorId: 'ven_1', kind: 'incident', severity: 'high', summary: 'x' },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    expect(sig.ok).toBe(true);
+
+    const registered = await ctx.ledger.query({ types: ['vendor.registered'] });
+    expect(registered[0]?.event.labels).toEqual({ tenant: 'acme', project: 'alpha' });
+    const signals = await ctx.ledger.query({ types: ['vendor.signal'] });
+    expect(signals[0]?.event.labels).toEqual({ tenant: 'acme', project: 'alpha' });
+  });
+
+  it('filters listVendors and signalsFor by ledger labels', async () => {
+    const { module } = setup();
+    const acme = { labels: { tenant: 'acme', project: 'alpha' } };
+    const other = { labels: { tenant: 'other', project: 'alpha' } };
+    await module.register({ id: 'ven_acme', name: 'Acme', category: 'api' }, acme);
+    await module.register({ id: 'ven_other', name: 'Other', category: 'api' }, other);
+    await module.recordSignal(
+      { vendorId: 'ven_acme', kind: 'incident', severity: 'high', summary: 'a' },
+      acme,
+    );
+    await module.recordSignal(
+      { vendorId: 'ven_other', kind: 'incident', severity: 'high', summary: 'b' },
+      other,
+    );
+
+    const scopedVendors = await module.listVendors(acme);
+    expect(scopedVendors.map((v) => v.id)).toEqual(['ven_acme']);
+    expect(await module.signalsFor('ven_acme', acme)).toHaveLength(1);
+    // A scoped reader cannot see another tenant's signals even by id.
+    expect(await module.signalsFor('ven_other', acme)).toHaveLength(0);
+  });
+
+  it('scopes score and assess to the projection labels', async () => {
+    const { module } = setup();
+    const acme = { labels: { tenant: 'acme', project: 'alpha' } };
+    const other = { labels: { tenant: 'other', project: 'alpha' } };
+    await module.register({ id: 'ven_acme', name: 'Acme', category: 'api' }, acme);
+    await module.register({ id: 'ven_other', name: 'Other', category: 'api' }, other);
+
+    const assessed = await module.assess(acme);
+    expect(assessed.map((s) => s.vendorId)).toEqual(['ven_acme']);
+
+    // Another tenant's vendor is NOT_FOUND under this scope, not silently scored.
+    const crossScope = await module.score('ven_other', acme);
+    expect(crossScope.ok).toBe(false);
+    if (!crossScope.ok) expect(crossScope.error.code).toBe('NOT_FOUND');
+  });
+});

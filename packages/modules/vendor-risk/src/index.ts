@@ -5,6 +5,7 @@ import {
   notFoundError,
   ok,
   validationError,
+  type EventQuery,
   type LedgerRecord,
   type ModuleContext,
   type Result,
@@ -27,6 +28,18 @@ export { bandFor } from './scoring.js';
 export interface MonitorSource {
   readonly name: string;
   poll(): Promise<VendorSignal[]>;
+}
+
+/** Optional ledger envelope values for vendor facts. */
+export interface VendorRiskRecordOptions {
+  /** Labels to write onto `vendor.registered` / `vendor.signal` event envelopes. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Optional projection filters for vendor risk reads. */
+export interface VendorRiskProjectionOptions {
+  /** Restrict reads to vendor risk records carrying these exact ledger labels. */
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -53,7 +66,10 @@ export class VendorRiskModule implements VeritrailModule {
    * Register a third party in the inventory. Assigns an id (`ven…`) when absent,
    * validates against `VendorSchema`, and appends a `vendor.registered` event.
    */
-  async register(input: unknown): Promise<Result<LedgerRecord, VeritrailError>> {
+  async register(
+    input: unknown,
+    opts?: VendorRiskRecordOptions,
+  ): Promise<Result<LedgerRecord, VeritrailError>> {
     const withId = this.#withId(input, 'ven');
     const parsed = VendorSchema.safeParse(withId);
     if (!parsed.success) {
@@ -64,6 +80,7 @@ export class VendorRiskModule implements VeritrailModule {
     return this.#ctx.ledger.append({
       type: 'vendor.registered',
       actorId: this.info.name,
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
       payload: { vendor },
     });
   }
@@ -72,7 +89,10 @@ export class VendorRiskModule implements VeritrailModule {
    * Record a risk observation about a vendor. Assigns an id (`sig…`) when absent,
    * validates against `VendorSignalSchema`, and appends a `vendor.signal` event.
    */
-  async recordSignal(input: unknown): Promise<Result<LedgerRecord, VeritrailError>> {
+  async recordSignal(
+    input: unknown,
+    opts?: VendorRiskRecordOptions,
+  ): Promise<Result<LedgerRecord, VeritrailError>> {
     const withId = this.#withId(input, 'sig');
     const parsed = VendorSignalSchema.safeParse(withId);
     if (!parsed.success) {
@@ -86,13 +106,14 @@ export class VendorRiskModule implements VeritrailModule {
     return this.#ctx.ledger.append({
       type: 'vendor.signal',
       actorId: this.info.name,
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
       payload: { signal },
     });
   }
 
   /** Project the current vendor inventory from the ledger. */
-  async listVendors(): Promise<Vendor[]> {
-    const records = await this.#ctx.ledger.query({ types: ['vendor.registered'] });
+  async listVendors(opts?: VendorRiskProjectionOptions): Promise<Vendor[]> {
+    const records = await this.#ctx.ledger.query(vendorQuery(['vendor.registered'], opts));
     const byId = new Map<string, Vendor>();
     for (const record of records) {
       if (record.event.type !== 'vendor.registered') continue;
@@ -103,8 +124,8 @@ export class VendorRiskModule implements VeritrailModule {
   }
 
   /** All signals recorded for a vendor, in ledger order. */
-  async signalsFor(vendorId: string): Promise<VendorSignal[]> {
-    const records = await this.#ctx.ledger.query({ types: ['vendor.signal'] });
+  async signalsFor(vendorId: string, opts?: VendorRiskProjectionOptions): Promise<VendorSignal[]> {
+    const records = await this.#ctx.ledger.query(vendorQuery(['vendor.signal'], opts));
     const out: VendorSignal[] = [];
     for (const record of records) {
       if (record.event.type !== 'vendor.signal') continue;
@@ -115,23 +136,26 @@ export class VendorRiskModule implements VeritrailModule {
   }
 
   /** Compute the time-decayed risk score for one vendor. NOT_FOUND if unknown. */
-  async score(vendorId: string): Promise<Result<VendorRiskScore, VeritrailError>> {
-    const vendors = await this.listVendors();
+  async score(
+    vendorId: string,
+    opts?: VendorRiskProjectionOptions,
+  ): Promise<Result<VendorRiskScore, VeritrailError>> {
+    const vendors = await this.listVendors(opts);
     const vendor = vendors.find((v) => v.id === vendorId);
     if (!vendor) {
       return err(notFoundError(`unknown vendor: ${vendorId}`, { vendorId }));
     }
-    const signals = await this.#signalRecordsFor(vendorId);
+    const signals = await this.#signalRecordsFor(vendorId, opts);
     return ok(computeScore(vendor, signals, this.#ctx.clock.now()));
   }
 
   /** Score every vendor, sorted by score descending (riskiest first). */
-  async assess(): Promise<VendorRiskScore[]> {
-    const vendors = await this.listVendors();
+  async assess(opts?: VendorRiskProjectionOptions): Promise<VendorRiskScore[]> {
+    const vendors = await this.listVendors(opts);
     const now = this.#ctx.clock.now();
     const scores: VendorRiskScore[] = [];
     for (const vendor of vendors) {
-      const signals = await this.#signalRecordsFor(vendor.id);
+      const signals = await this.#signalRecordsFor(vendor.id, opts);
       scores.push(computeScore(vendor, signals, now));
     }
     return scores.sort((a, b) => b.score - a.score);
@@ -158,8 +182,9 @@ export class VendorRiskModule implements VeritrailModule {
   /** Signals for a vendor paired with their authoritative ledger timestamps. */
   async #signalRecordsFor(
     vendorId: string,
+    opts?: VendorRiskProjectionOptions,
   ): Promise<Array<{ signal: VendorSignal; timestamp: number }>> {
-    const records = await this.#ctx.ledger.query({ types: ['vendor.signal'] });
+    const records = await this.#ctx.ledger.query(vendorQuery(['vendor.signal'], opts));
     const out: Array<{ signal: VendorSignal; timestamp: number }> = [];
     for (const record of records) {
       if (record.event.type !== 'vendor.signal') continue;
@@ -194,4 +219,14 @@ export class VendorRiskModule implements VeritrailModule {
 /** Construct a {@link VendorRiskModule} bound to a module context. */
 export function createVendorRiskModule(ctx: ModuleContext): VendorRiskModule {
   return new VendorRiskModule(ctx);
+}
+
+function vendorQuery(
+  types: NonNullable<EventQuery['types']>,
+  opts?: VendorRiskProjectionOptions,
+): EventQuery {
+  return {
+    types,
+    ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+  };
 }

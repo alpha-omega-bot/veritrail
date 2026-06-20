@@ -57,14 +57,33 @@ interface MonitorSource {
   poll(): Promise<VendorSignal[]>;
 }
 
+/** Labels written onto vendor facts (e.g. tenant/project) for scoped ingest. */
+interface VendorRiskRecordOptions {
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Exact-label filter applied to vendor reads for tenant-scoped projections. */
+interface VendorRiskProjectionOptions {
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
 class VendorRiskModule implements VeritrailModule {
   constructor(ctx: ModuleContext);
-  register(input: unknown): Promise<Result<LedgerRecord, VeritrailError>>;
-  recordSignal(input: unknown): Promise<Result<LedgerRecord, VeritrailError>>;
-  listVendors(): Promise<Vendor[]>;
-  signalsFor(vendorId: string): Promise<VendorSignal[]>;
-  score(vendorId: string): Promise<Result<VendorRiskScore, VeritrailError>>;
-  assess(): Promise<VendorRiskScore[]>;
+  register(
+    input: unknown,
+    opts?: VendorRiskRecordOptions,
+  ): Promise<Result<LedgerRecord, VeritrailError>>;
+  recordSignal(
+    input: unknown,
+    opts?: VendorRiskRecordOptions,
+  ): Promise<Result<LedgerRecord, VeritrailError>>;
+  listVendors(opts?: VendorRiskProjectionOptions): Promise<Vendor[]>;
+  signalsFor(vendorId: string, opts?: VendorRiskProjectionOptions): Promise<VendorSignal[]>;
+  score(
+    vendorId: string,
+    opts?: VendorRiskProjectionOptions,
+  ): Promise<Result<VendorRiskScore, VeritrailError>>;
+  assess(opts?: VendorRiskProjectionOptions): Promise<VendorRiskScore[]>;
   ingest(source: MonitorSource): Promise<number>;
 }
 
@@ -75,6 +94,12 @@ function createVendorRiskModule(ctx: ModuleContext): VendorRiskModule;
 `VendorSignalSchema`, assigning an id (`ven…` / `sig…`) when absent. Expected
 failures are returned as `Result` errors (`VALIDATION`, `NOT_FOUND`) — never
 thrown.
+
+Passing `labels` on a write stamps them onto the `vendor.registered` /
+`vendor.signal` event envelope; passing `labels` on a read restricts the
+projection to vendor facts carrying exactly those labels. The server uses these
+options to enforce per-tenant API-key label scopes; a vendor registered without
+labels is not visible to a label-scoped reader.
 
 ## Example
 

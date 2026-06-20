@@ -1045,6 +1045,128 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('enforces label scopes on vendor writes and vendor risk read projections', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'tenant-admin-acme',
+            actorId: 'tenant-admin',
+            secret: 'vendor-acme-admin-secret-0001',
+            roles: ['admin'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-admin-other',
+            actorId: 'tenant-admin',
+            secret: 'vendor-other-admin-secret-0001',
+            roles: ['admin'],
+            labelScope: { tenant: 'other', project: 'alpha' },
+          },
+          {
+            id: 'tenant-ingest-acme',
+            actorId: 'tenant-agent',
+            secret: 'vendor-acme-ingest-secret-0001',
+            roles: ['ingest'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-vendor-reader',
+            actorId: 'tenant-operator',
+            secret: 'vendor-acme-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['vendor-risk:read'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'operator',
+            actorId: 'operator-1',
+            secret: 'vendor-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['vendor-risk:read'],
+          },
+        ],
+      },
+    });
+    try {
+      const acmeAdmin = { authorization: 'Bearer vendor-acme-admin-secret-0001', ...json };
+      const otherAdmin = { authorization: 'Bearer vendor-other-admin-secret-0001', ...json };
+
+      const acmeVendor = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/vendors',
+        headers: acmeAdmin,
+        payload: body({ id: 'ven_acme', name: 'Acme Cloud', category: 'api', criticality: 'high' }),
+      });
+      expect(acmeVendor.statusCode).toBe(200);
+
+      const otherVendor = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/vendors',
+        headers: otherAdmin,
+        payload: body({ id: 'ven_other', name: 'Other Cloud', category: 'api' }),
+      });
+      expect(otherVendor.statusCode).toBe(200);
+
+      // A scoped ingest key may only record signals under its own tenant labels.
+      const acmeSignal = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/vendors/signals',
+        headers: { authorization: 'Bearer vendor-acme-ingest-secret-0001', ...json },
+        payload: body({
+          vendorId: 'ven_acme',
+          kind: 'incident',
+          severity: 'critical',
+          summary: 'outage',
+        }),
+      });
+      expect(acmeSignal.statusCode).toBe(200);
+
+      const reader = { authorization: 'Bearer vendor-acme-reader-secret-0001' };
+
+      const scopedList = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/vendors',
+        headers: reader,
+      });
+      expect(scopedList.statusCode).toBe(200);
+      expect((scopedList.json() as Array<{ id: string }>).map((v) => v.id)).toEqual(['ven_acme']);
+
+      const scopedAssess = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/vendor-risk/assess',
+        headers: reader,
+      });
+      expect(scopedAssess.statusCode).toBe(200);
+      expect((scopedAssess.json() as Array<{ vendorId: string }>).map((s) => s.vendorId)).toEqual([
+        'ven_acme',
+      ]);
+
+      // Another tenant's vendor is invisible to the scoped reader, not merely empty.
+      const crossScore = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/vendor-risk/ven_other/score',
+        headers: reader,
+      });
+      expect(crossScore.statusCode).toBe(404);
+
+      // An unscoped operator still sees the whole inventory across tenants.
+      const unscopedList = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/vendors',
+        headers: { authorization: 'Bearer vendor-reader-secret-0001' },
+      });
+      expect(unscopedList.statusCode).toBe(200);
+      expect((unscopedList.json() as Array<{ id: string }>).map((v) => v.id).sort()).toEqual([
+        'ven_acme',
+        'ven_other',
+      ]);
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('denies label-scoped principals on unpartitioned module projections', async () => {
     const scopedApp = await buildServer({
       logger: false,
@@ -1129,10 +1251,6 @@ describe('Veritrail HTTP server auth', () => {
         ['GET', '/api/audit/verify'],
         ['GET', '/api/audit/export'],
         ['POST', '/api/permissions/evaluate'],
-        ['GET', '/api/vendors'],
-        ['GET', '/api/vendors/ven-1/signals'],
-        ['GET', '/api/vendor-risk/assess'],
-        ['GET', '/api/vendor-risk/ven-1/score'],
         ['GET', '/api/forensics/incident?correlationId=run-1'],
         ['GET', '/api/forensics/cause/action-1'],
         ['POST', '/api/rollback/plan/action/action-1'],
@@ -1168,15 +1286,6 @@ describe('Veritrail HTTP server auth', () => {
             action: { id: 'action-1', actorId: 'tenant-agent', type: 'tool.search' },
           },
         ],
-        [
-          '/api/vendors/signals',
-          {
-            vendorId: 'ven-1',
-            kind: 'incident',
-            severity: 'high',
-            summary: 'Incident',
-          },
-        ],
       ] as const;
 
       for (const [url, payload] of deniedIngestRoutes) {
@@ -1196,13 +1305,6 @@ describe('Veritrail HTTP server auth', () => {
         [
           '/api/permissions/policies',
           { name: 'tenant policy', effect: 'allow', match: { actionTypes: ['tool.*'] } },
-        ],
-        [
-          '/api/vendors',
-          {
-            name: 'Tenant Vendor',
-            category: 'api',
-          },
         ],
       ] as const) {
         const res = await scopedApp.inject({
