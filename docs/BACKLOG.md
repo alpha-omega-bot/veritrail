@@ -128,8 +128,8 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### vendor-risk
 
-- [ ] Real monitor feeds (status pages, CVE, SOC2/cert expiry); alert thresholds;
-      SLA tracking; dependency mapping to affected agents.
+- [ ] Real monitor feeds (status pages, CVE, SOC2/cert expiry); SLA tracking;
+      dependency mapping to affected agents. (alert thresholds done — see below)
 
 ---
 
@@ -199,6 +199,21 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added vendor-risk alert thresholds (M2 feature-depth). The
+  module now accepts `{ alertBand }`; when `recordSignal` raises a vendor's
+  time-decayed score _up across_ that band (below before the signal, at/above
+  after, both at the same `now`), it appends a `note` alert fact carrying
+  `data: { kind: 'vendor-risk.alert', vendorId, signalId, fromBand, toBand,
+alertBand, score }`. Edge-triggered (a vendor already in-band doesn't re-alert),
+  opt-in (default unset → no alerts, no extra ledger reads), ledger-native (the
+  before/after comparison recomputes from signal history — no stored state), and
+  best-effort (the `vendor.signal` append is still the returned record; a failed
+  alert is logged). Cleared the alert-threshold Phase 1 TODO. **Next:** the
+  remaining vendor-risk depth (real monitor feeds, SLA tracking) and the other
+  M2 feature-depth items — note several introduce a dependency or network
+  (evidence external capture, decision-memory embeddings, rollback executor
+  adapters) and deserve deliberate scoping.
 
 - **2026-06-20** — Fixed the decision-memory `recall`/`list` review findings (M2,
   2× low). Negative `limit` no longer returns everything: `list()` and `recall()`

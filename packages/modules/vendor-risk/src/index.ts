@@ -16,7 +16,7 @@ import {
 } from '@veritrail/core';
 import type { ZodError } from 'zod';
 
-import { computeScore, type VendorRiskScore } from './scoring.js';
+import { computeScore, type RiskBand, type VendorRiskScore } from './scoring.js';
 
 export type { RiskBand, VendorRiskScore } from './scoring.js';
 export { bandFor } from './scoring.js';
@@ -29,6 +29,20 @@ export interface MonitorSource {
   readonly name: string;
   poll(): Promise<VendorSignal[]>;
 }
+
+/** Construction-time options for {@link VendorRiskModule}. */
+export interface VendorRiskConfig {
+  /**
+   * When set, recording a signal that raises a vendor's time-decayed score
+   * *up* across this band (i.e. the vendor was below it before the signal and
+   * at/above it after) appends a `note` alert fact to the ledger. Unset (the
+   * default) disables alerting entirely. See {@link VendorRiskModule.recordSignal}.
+   */
+  readonly alertBand?: RiskBand;
+}
+
+/** Rank of each risk band, lowest to highest, for threshold comparisons. */
+const BAND_RANK: Record<RiskBand, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
 /** Optional ledger envelope values for vendor facts. */
 export interface VendorRiskRecordOptions {
@@ -57,9 +71,11 @@ export class VendorRiskModule implements VeritrailModule {
   };
 
   readonly #ctx: ModuleContext;
+  readonly #alertBand: RiskBand | undefined;
 
-  constructor(ctx: ModuleContext) {
+  constructor(ctx: ModuleContext, config?: VendorRiskConfig) {
     this.#ctx = ctx;
+    this.#alertBand = config?.alertBand;
   }
 
   /**
@@ -88,6 +104,13 @@ export class VendorRiskModule implements VeritrailModule {
   /**
    * Record a risk observation about a vendor. Assigns an id (`sig…`) when absent,
    * validates against `VendorSignalSchema`, and appends a `vendor.signal` event.
+   *
+   * When an `alertBand` is configured and this signal raises the vendor's
+   * time-decayed score *up* across that band (below it before the signal,
+   * at/above it after — both computed at the same instant), a `note` alert fact
+   * is appended after the signal. Alerting is best-effort: a failed alert append
+   * is logged but does not fail the signal recording, and the returned record is
+   * always the `vendor.signal` append.
    */
   async recordSignal(
     input: unknown,
@@ -103,12 +126,75 @@ export class VendorRiskModule implements VeritrailModule {
       vendorId: signal.vendorId,
       signalId: signal.id,
     });
-    return this.#ctx.ledger.append({
+    const appended = await this.#ctx.ledger.append({
       type: 'vendor.signal',
       actorId: this.info.name,
       ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
       payload: { signal },
     });
+
+    if (appended.ok && this.#alertBand !== undefined) {
+      await this.#maybeAlertOnCrossing(signal, this.#alertBand, opts);
+    }
+
+    return appended;
+  }
+
+  /**
+   * If recording `signal` pushed the vendor's score up across `alertBand`,
+   * append a `note` documenting the crossing. Pure projection: the before/after
+   * scores are recomputed from signal history at one clock instant, so no state
+   * is held outside the ledger. Best-effort — failures are logged, not thrown.
+   */
+  async #maybeAlertOnCrossing(
+    signal: VendorSignal,
+    alertBand: RiskBand,
+    opts?: VendorRiskRecordOptions,
+  ): Promise<void> {
+    const vendors = await this.listVendors(opts);
+    const vendor = vendors.find((v) => v.id === signal.vendorId);
+    if (!vendor) return; // signal for an unregistered vendor — nothing to score.
+
+    const now = this.#ctx.clock.now();
+    const after = await this.#signalRecordsFor(signal.vendorId, opts);
+    const before = after.filter((s) => s.signal.id !== signal.id);
+
+    const bandBefore = computeScore(vendor, before, now).band;
+    const scoreAfter = computeScore(vendor, after, now);
+    const threshold = BAND_RANK[alertBand];
+
+    // Fire only on an upward crossing of the threshold (edge-triggered), so a
+    // vendor already in-band does not re-alert on every subsequent signal.
+    if (BAND_RANK[bandBefore] >= threshold || BAND_RANK[scoreAfter.band] < threshold) {
+      return;
+    }
+
+    const text =
+      `Vendor ${vendor.name} (${vendor.id}) crossed into risk band ` +
+      `'${scoreAfter.band}' (score ${scoreAfter.score}) on signal ${signal.id}`;
+    const alert = await this.#ctx.ledger.append({
+      type: 'note',
+      actorId: this.info.name,
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+      payload: {
+        text,
+        data: {
+          kind: 'vendor-risk.alert',
+          vendorId: vendor.id,
+          signalId: signal.id,
+          fromBand: bandBefore,
+          toBand: scoreAfter.band,
+          alertBand,
+          score: scoreAfter.score,
+        },
+      },
+    });
+    if (!alert.ok) {
+      this.#ctx.logger.warn('vendor-risk alert note failed to append', {
+        vendorId: vendor.id,
+        reason: alert.error.message,
+      });
+    }
   }
 
   /** Project the current vendor inventory from the ledger. */
@@ -217,8 +303,11 @@ export class VendorRiskModule implements VeritrailModule {
 }
 
 /** Construct a {@link VendorRiskModule} bound to a module context. */
-export function createVendorRiskModule(ctx: ModuleContext): VendorRiskModule {
-  return new VendorRiskModule(ctx);
+export function createVendorRiskModule(
+  ctx: ModuleContext,
+  config?: VendorRiskConfig,
+): VendorRiskModule {
+  return new VendorRiskModule(ctx, config);
 }
 
 function vendorQuery(

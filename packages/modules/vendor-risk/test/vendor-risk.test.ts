@@ -365,3 +365,110 @@ describe('tenant label scoping', () => {
     if (!crossScope.ok) expect(crossScope.error.code).toBe('NOT_FOUND');
   });
 });
+
+describe('alert thresholds', () => {
+  function setupWithAlert(alertBand: 'low' | 'medium' | 'high' | 'critical'): {
+    module: VendorRiskModule;
+    ctx: ModuleContext;
+  } {
+    const clock = new FixedClock(START);
+    const ledger = createInMemoryLedger({ clock, ids: new SequentialIdGenerator() });
+    const ctx: ModuleContext = {
+      ledger,
+      clock,
+      ids: new SequentialIdGenerator(),
+      logger: noopLogger,
+    };
+    return { module: createVendorRiskModule(ctx, { alertBand }), ctx };
+  }
+
+  async function notes(ctx: ModuleContext): Promise<Array<{ data?: Record<string, unknown> }>> {
+    const records = await ctx.ledger.query({ types: ['note'] });
+    return records.flatMap((r) =>
+      r.event.type === 'note' ? [r.event.payload as { data?: Record<string, unknown> }] : [],
+    );
+  }
+
+  it('appends a note when a signal raises the score up across the alert band', async () => {
+    const { module, ctx } = setupWithAlert('medium');
+    // low-criticality base = 5 (low); one critical signal = +20 → 25 (medium).
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'api', criticality: 'low' });
+    await module.recordSignal({
+      vendorId: 'ven_1',
+      kind: 'breach',
+      severity: 'critical',
+      summary: 'x',
+    });
+
+    const alerts = await notes(ctx);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.data).toMatchObject({
+      kind: 'vendor-risk.alert',
+      vendorId: 'ven_1',
+      fromBand: 'low',
+      toBand: 'medium',
+      alertBand: 'medium',
+    });
+  });
+
+  it('does not alert when no alertBand is configured (default)', async () => {
+    const { module, ctx } = setup(); // no alertBand
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'api', criticality: 'low' });
+    await module.recordSignal({
+      vendorId: 'ven_1',
+      kind: 'breach',
+      severity: 'critical',
+      summary: 'x',
+    });
+    expect(await notes(ctx)).toHaveLength(0);
+  });
+
+  it('is edge-triggered: a vendor already in-band does not re-alert', async () => {
+    const { module, ctx } = setupWithAlert('medium');
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'api', criticality: 'low' });
+    // First critical → 25 (low→medium): alerts. Second → 45 (still medium): no alert.
+    await module.recordSignal({
+      vendorId: 'ven_1',
+      kind: 'breach',
+      severity: 'critical',
+      summary: 'a',
+    });
+    await module.recordSignal({
+      vendorId: 'ven_1',
+      kind: 'breach',
+      severity: 'critical',
+      summary: 'b',
+    });
+    expect(await notes(ctx)).toHaveLength(1);
+  });
+
+  it('does not alert when the score stays below the configured band', async () => {
+    const { module, ctx } = setupWithAlert('high');
+    // One critical → 25 (medium), below the 'high' threshold (>=50).
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'api', criticality: 'low' });
+    await module.recordSignal({
+      vendorId: 'ven_1',
+      kind: 'breach',
+      severity: 'critical',
+      summary: 'x',
+    });
+    expect(await notes(ctx)).toHaveLength(0);
+  });
+
+  it('alerts on the signal that finally crosses into a higher band', async () => {
+    const { module, ctx } = setupWithAlert('high');
+    // 3 criticals → 5 + 60 = 65 (high). Crossing happens on the 3rd signal.
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'api', criticality: 'low' });
+    for (const summary of ['a', 'b', 'c']) {
+      await module.recordSignal({
+        vendorId: 'ven_1',
+        kind: 'breach',
+        severity: 'critical',
+        summary,
+      });
+    }
+    const alerts = await notes(ctx);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.data).toMatchObject({ toBand: 'high', alertBand: 'high' });
+  });
+});
