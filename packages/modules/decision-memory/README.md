@@ -28,7 +28,7 @@ those events. There is **no separate store**.
 ```ts
 interface DecisionMatch {
   decision: Decision;
-  score: number; // shared / max(1, queryTokens); 1 for empty-text recall
+  score: number; // distinctSharedTokens / distinctQueryTokens; 1 for empty-text recall
 }
 
 interface RecallQuery {
@@ -72,17 +72,19 @@ function createDecisionMemoryModule(ctx: ModuleContext): DecisionMemoryModule;
 ### Scoring
 
 `recall` tokenizes `query.text` (lowercase, split on non-alphanumerics, drop
-empties) and scores each decision against the tokens of
-`summary + ' ' + rationale + ' ' + chosen`:
+empties), reduces it to its **distinct** tokens, and scores each decision against
+the distinct tokens of `summary + ' ' + rationale + ' ' + chosen`:
 
 ```
-score = sharedTokenCount / max(1, queryTokenCount)
+score = distinctSharedTokenCount / distinctQueryTokenCount
 ```
 
-Results are filtered by `actorId` (when set), sorted by score descending then
-most-recent, and truncated to `limit` (default `10`). Decisions sharing no query
-tokens are dropped. When `query.text` is absent or has no tokens, recall returns
-the most-recent decisions, each with `score: 1`.
+So a full match scores `1` regardless of how often a token is repeated in the
+query. Results are filtered by `actorId` (when set), sorted by score descending
+then most-recent, and truncated to `limit` (default `10`; a non-positive `limit`
+returns an empty result). Decisions sharing no query tokens are dropped. When
+`query.text` is absent or has no tokens, recall returns the most-recent
+decisions, each with `score: 1`.
 
 When `labels` are supplied, `list`, `get`, and `recall` only project
 `decision.recorded` events whose ledger envelope carries every requested
