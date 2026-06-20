@@ -108,6 +108,23 @@ export interface RootCauseCandidate {
   readonly impactedCount: number;
 }
 
+/**
+ * A shareable, self-contained forensic package for one correlation: the incident
+ * report, the ranked root-cause candidates, and the forward blast radius of the
+ * top candidate — everything needed to triage and hand off an incident.
+ */
+export interface IncidentBundle {
+  readonly correlationId: string;
+  /** When the bundle was assembled (from the injected clock). */
+  readonly generatedAt: number;
+  /** The full incident report (timeline, counts, actors). */
+  readonly incident: IncidentReport;
+  /** Candidate root causes, worst-first (see {@link RootCauseCandidate}). */
+  readonly rootCauses: RootCauseCandidate[];
+  /** Forward blast radius of the top-ranked root cause, or `null` when there is none. */
+  readonly topRootCauseBlastRadius: BlastRadiusReport | null;
+}
+
 function toTimelineEntry(record: LedgerRecord): TimelineEntry {
   return {
     seq: record.seq,
@@ -404,6 +421,39 @@ export class ForensicsModule implements VeritrailModule {
     // Most downstream impact first; ties resolve to the earliest event.
     candidates.sort((a, b) => b.impactedCount - a.impactedCount || a.seq - b.seq);
     return candidates;
+  }
+
+  /**
+   * Assemble a shareable {@link IncidentBundle} for a correlation: its
+   * {@link incident} report, its ranked {@link rankRootCauses} candidates, and
+   * the {@link blastRadius} of the top-ranked root cause (or `null` when the
+   * correlation has no candidate root cause). A pure composition of the existing
+   * projections — everything needed to triage and hand off an incident in one
+   * object. Tenant-scoped via `opts`.
+   */
+  async incidentBundle(
+    correlationId: string,
+    opts?: ForensicsProjectionOptions,
+  ): Promise<IncidentBundle> {
+    const [incident, rootCauses] = await Promise.all([
+      this.incident(correlationId, opts),
+      this.rankRootCauses(correlationId, opts),
+    ]);
+
+    let topRootCauseBlastRadius: BlastRadiusReport | null = null;
+    const top = rootCauses[0];
+    if (top) {
+      const radius = await this.blastRadius(top.id, opts);
+      if (radius.ok) topRootCauseBlastRadius = radius.value;
+    }
+
+    return {
+      correlationId,
+      generatedAt: this.#ctx.clock.now(),
+      incident,
+      rootCauses,
+      topRootCauseBlastRadius,
+    };
   }
 }
 

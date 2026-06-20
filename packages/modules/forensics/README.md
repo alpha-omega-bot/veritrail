@@ -27,6 +27,10 @@ demand, so it can never drift from the system of record.
   rollback events worst-first by the size of each one's forward blast radius
   (most downstream impact first), ties broken toward the earliest event. A
   deterministic baseline heuristic, not a causal-inference model.
+- **`incidentBundle(correlationId)`** — a shareable package composing the above:
+  the `incident` report, the ranked root causes, and the `blastRadius` of the
+  top-ranked cause, plus a `generatedAt` stamp. Everything needed to triage and
+  hand off an incident in one object.
 
 ## Public API
 
@@ -71,6 +75,14 @@ interface RootCauseCandidate {
   impactedCount: number; // forward blast radius (downstream events, excl. itself)
 }
 
+interface IncidentBundle {
+  correlationId: string;
+  generatedAt: number;
+  incident: IncidentReport;
+  rootCauses: RootCauseCandidate[];
+  topRootCauseBlastRadius: BlastRadiusReport | null;
+}
+
 class ForensicsModule implements VeritrailModule {
   readonly info: { name: '@veritrail/forensics'; version: '0.1.0'; capability: 'forensics' };
   constructor(ctx: ModuleContext);
@@ -85,6 +97,7 @@ class ForensicsModule implements VeritrailModule {
     correlationId: string,
     opts?: ForensicsProjectionOptions,
   ): Promise<RootCauseCandidate[]>;
+  incidentBundle(correlationId: string, opts?: ForensicsProjectionOptions): Promise<IncidentBundle>;
 }
 
 interface ForensicsProjectionOptions {
@@ -104,8 +117,9 @@ a hop to an out-of-scope link truncates the chain at the tenant boundary rather
 than revealing cross-tenant causation. `blastRadius` likewise only reaches
 in-scope downstream records, so the radius truncates at the boundary and a root
 outside the scope is `NOT_FOUND`. `rankRootCauses` only considers in-scope
-candidates and counts in-scope downstream events. The server uses these options
-to enforce per-tenant API-key label scopes.
+candidates and counts in-scope downstream events. `incidentBundle` scopes every
+component the same way. The server uses these options to enforce per-tenant
+API-key label scopes.
 
 ## Example
 
