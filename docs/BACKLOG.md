@@ -117,8 +117,11 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### decision-memory
 
-- [ ] Semantic recall via embeddings. (recency/decay weighting + outcome linkage
-      done — see below; embeddings remain, needs a dependency decision)
+- [x] Semantic recall via embeddings — `EmbeddingProvider` port + cosine ranking + `HashingEmbeddingProvider` reference impl implemented (recency/decay
+      weighting + outcome linkage also done — see below). A concrete networked
+      model adapter remains deployment-supplied (analogous to
+      `@veritrail/provider-signers`). **All in-module decision-memory GA work is
+      done.**
 - [x] `recall` score denominator uses distinct-token set size, diverging from the
       documented `sharedTokens / queryTokens` for repeated tokens; and negative
       `limit` in `list()` returns ALL — clamp/validate. Fixed: `list()` and
@@ -201,6 +204,23 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added decision-memory semantic recall via an injectable
+  `EmbeddingProvider` port (M2 feature-depth; user picked this dependency item).
+  Construct with `{ embeddingProvider }` and `recall` ranks by cosine similarity
+  (clamped `[0,1]`, recency factor still multiplies, zero-score dropped) instead
+  of lexical overlap; on provider throw/wrong-count it logs and **falls back to
+  lexical** (never hard-fails); empty-text stays pure recency with no provider
+  call. The port is module-local (mirrors `MonitorSource`/`Signer`), so
+  `@veritrail/core` and the module gain **zero runtime deps** — a real model
+  plugs in at deployment like KMS does for signing. Shipped a dependency-free
+  deterministic `HashingEmbeddingProvider` reference impl (hashing trick) for
+  tests/local. Tests prove semantic-overrides-lexical, recency still applies,
+  lexical fallback, and no-call-on-empty-text. **All in-module decision-memory GA
+  work is now done; only a deployment-side model adapter remains.** **Next:** the
+  contained backlog is fully drained — remaining work (vendor-risk SLA tracking +
+  schema choice, evidence external capture, vendor-risk live feeds, rollback
+  executor adapters, and GA-maturity declarations) all needs a user call.
 
 - **2026-06-20** — Added evidence `list` pagination (M2 feature-depth, the
   concrete piece of "large-graph pagination"). `list` now takes

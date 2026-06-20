@@ -70,6 +70,33 @@ export interface DecisionProjectionOptions {
   readonly labels?: Readonly<Record<string, string>>;
 }
 
+/**
+ * A pluggable text-embedding model for semantic recall. Implementations turn
+ * text into fixed-length vectors; the module ranks decisions by cosine
+ * similarity to the query vector. The reference {@link HashingEmbeddingProvider}
+ * is dependency-free; production deployments inject a real model (the same way
+ * `Signer` / `MonitorSource` are injected). Kept out of `@veritrail/core` so no
+ * model SDK becomes a runtime dependency.
+ */
+export interface EmbeddingProvider {
+  /**
+   * Embed each input string into a vector. Called once per `recall` with the
+   * query followed by every candidate's text, so a networked model makes one
+   * round-trip. Must return one vector per input, in order, all the same length.
+   */
+  embed(texts: readonly string[]): Promise<number[][]>;
+}
+
+/** Construction-time options for {@link DecisionMemoryModule}. */
+export interface DecisionMemoryConfig {
+  /**
+   * When provided, `recall` ranks by embedding cosine similarity instead of
+   * lexical token overlap (recency weighting still applies). Omitted → lexical
+   * recall, the default.
+   */
+  readonly embeddingProvider?: EmbeddingProvider;
+}
+
 /** The terminal outcome of a single related action, derived from its lifecycle events. */
 export type ActionOutcome = 'succeeded' | 'failed' | 'denied' | 'rolled_back' | 'pending';
 
@@ -107,9 +134,11 @@ export class DecisionMemoryModule implements VeritrailModule {
   };
 
   readonly #ctx: ModuleContext;
+  readonly #embeddingProvider: EmbeddingProvider | undefined;
 
-  constructor(ctx: ModuleContext) {
+  constructor(ctx: ModuleContext, config?: DecisionMemoryConfig) {
     this.#ctx = ctx;
+    this.#embeddingProvider = config?.embeddingProvider;
   }
 
   /**
@@ -306,18 +335,33 @@ export class DecisionMemoryModule implements VeritrailModule {
         scored.push({ match: { decision: entry.decision, score: decay(entry.timestamp) }, index });
       }
     } else {
+      // Semantic scoring when an embedding provider is configured; falls back to
+      // lexical scoring if the provider fails, so recall never hard-errors.
+      const semantic =
+        this.#embeddingProvider !== undefined
+          ? await this.#semanticScores(query.text ?? '', decisions, this.#embeddingProvider)
+          : undefined;
+
       const querySet = new Set(queryTokens);
       for (let index = 0; index < decisions.length; index += 1) {
         const entry = decisions[index];
         if (!entry) continue;
-        const docSet = new Set(tokenize(searchableText(entry.decision)));
-        let shared = 0;
-        for (const token of querySet) {
-          if (docSet.has(token)) shared += 1;
+        let relevance: number;
+        if (semantic !== undefined) {
+          relevance = semantic[index] ?? 0;
+        } else {
+          const docSet = new Set(tokenize(searchableText(entry.decision)));
+          let shared = 0;
+          for (const token of querySet) {
+            if (docSet.has(token)) shared += 1;
+          }
+          relevance = shared / querySet.size;
         }
-        if (shared === 0) continue; // not relevant.
-        const score = (shared / querySet.size) * decay(entry.timestamp);
-        scored.push({ match: { decision: entry.decision, score }, index });
+        if (relevance <= 0) continue; // not relevant.
+        scored.push({
+          match: { decision: entry.decision, score: relevance * decay(entry.timestamp) },
+          index,
+        });
       }
     }
 
@@ -358,11 +402,49 @@ export class DecisionMemoryModule implements VeritrailModule {
     }
     return out;
   }
+
+  /**
+   * Cosine-similarity relevance per decision (aligned with `decisions` by index),
+   * clamped to `[0, 1]`. One `embed` call for the query plus every candidate.
+   * Returns `undefined` on provider failure or a malformed response so the caller
+   * falls back to lexical scoring; `recall` never hard-fails on the model.
+   */
+  async #semanticScores(
+    queryText: string,
+    decisions: ReadonlyArray<{ decision: Decision; timestamp: number }>,
+    provider: EmbeddingProvider,
+  ): Promise<number[] | undefined> {
+    const inputs = [queryText, ...decisions.map((d) => searchableText(d.decision))];
+    let vectors: number[][];
+    try {
+      vectors = await provider.embed(inputs);
+    } catch (cause) {
+      this.#ctx.logger.warn('decision-memory embedding failed; falling back to lexical recall', {
+        reason: cause instanceof Error ? cause.message : String(cause),
+      });
+      return undefined;
+    }
+    if (vectors.length !== inputs.length) {
+      this.#ctx.logger.warn(
+        'decision-memory embedding returned wrong count; using lexical recall',
+        {
+          expected: inputs.length,
+          got: vectors.length,
+        },
+      );
+      return undefined;
+    }
+    const queryVec = vectors[0]!;
+    return decisions.map((_, i) => Math.max(0, cosineSimilarity(queryVec, vectors[i + 1]!)));
+  }
 }
 
 /** Construct a {@link DecisionMemoryModule} from a {@link ModuleContext}. */
-export function createDecisionMemoryModule(ctx: ModuleContext): DecisionMemoryModule {
-  return new DecisionMemoryModule(ctx);
+export function createDecisionMemoryModule(
+  ctx: ModuleContext,
+  config?: DecisionMemoryConfig,
+): DecisionMemoryModule {
+  return new DecisionMemoryModule(ctx, config);
 }
 
 /** Pull the `decision` payload out of a `decision.recorded` record. */
@@ -401,4 +483,61 @@ function tokenize(text: string): string[] {
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((t) => t.length > 0);
+}
+
+/** Cosine similarity of two equal-length vectors; 0 when either has zero magnitude. */
+function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
+  const n = Math.min(a.length, b.length);
+  let dot = 0;
+  let magA = 0;
+  let magB = 0;
+  for (let i = 0; i < n; i += 1) {
+    const x = a[i]!;
+    const y = b[i]!;
+    dot += x * y;
+    magA += x * x;
+    magB += y * y;
+  }
+  if (magA === 0 || magB === 0) return 0;
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+}
+
+/** Deterministic 32-bit FNV-1a hash of a token, used to bucket it into a dimension. */
+function fnv1a(token: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < token.length; i += 1) {
+    hash ^= token.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Dependency-free, deterministic reference {@link EmbeddingProvider} using the
+ * hashing trick: each token is hashed into one of `dimensions` buckets and the
+ * bucket counts form a bag-of-words vector. It is fully reproducible and needs no
+ * model, which makes it ideal for tests and offline/local use — but it captures
+ * only lexical overlap (hashed), NOT true synonymy. Inject a real embedding model
+ * for genuine semantic recall.
+ */
+export class HashingEmbeddingProvider implements EmbeddingProvider {
+  readonly #dimensions: number;
+
+  constructor(dimensions = 256) {
+    if (!Number.isInteger(dimensions) || dimensions <= 0) {
+      throw new Error('HashingEmbeddingProvider: dimensions must be a positive integer');
+    }
+    this.#dimensions = dimensions;
+  }
+
+  async embed(texts: readonly string[]): Promise<number[][]> {
+    return texts.map((text) => {
+      const vec = new Array<number>(this.#dimensions).fill(0);
+      for (const token of tokenize(text)) {
+        const bucket = fnv1a(token) % this.#dimensions;
+        vec[bucket] = (vec[bucket] ?? 0) + 1;
+      }
+      return vec;
+    });
+  }
 }
