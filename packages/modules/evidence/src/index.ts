@@ -70,6 +70,14 @@ export interface EvidenceProjectionOptions {
   readonly labels?: Readonly<Record<string, string>>;
 }
 
+/** Options for {@link EvidenceModule.list}: projection filters plus pagination. */
+export interface EvidenceListOptions extends EvidenceProjectionOptions {
+  /** Skip this many records from the start (clamped to >= 0). Default 0. */
+  readonly offset?: number;
+  /** Cap the number of records returned. Omit for all; a negative value yields none. */
+  readonly limit?: number;
+}
+
 /**
  * Evidence Tracing engine. Reads (and, via {@link EvidenceModule.attach},
  * appends to) the shared ledger.
@@ -139,15 +147,25 @@ export class EvidenceModule implements VeritrailModule {
     });
   }
 
-  /** Project all attached evidence from the ledger, in attachment order. */
-  async list(opts?: EvidenceProjectionOptions): Promise<Evidence[]> {
+  /**
+   * Project attached evidence from the ledger, in attachment order. With
+   * `offset`/`limit` it returns a page of that ordering: `offset` is clamped to
+   * `>= 0`, and a negative `limit` yields an empty page (consistent with the
+   * other modules' limit handling). Omitting `limit` returns all records from
+   * `offset` onward.
+   */
+  async list(opts?: EvidenceListOptions): Promise<Evidence[]> {
     const records = await this.#ctx.ledger.query(evidenceQuery(opts));
     const out: Evidence[] = [];
     for (const record of records) {
       const evidence = extractEvidence(record);
       if (evidence) out.push(evidence);
     }
-    return out;
+    const offset = opts?.offset !== undefined ? Math.max(0, opts.offset) : 0;
+    if (opts?.limit === undefined) {
+      return offset === 0 ? out : out.slice(offset);
+    }
+    return out.slice(offset, offset + Math.max(0, opts.limit));
   }
 
   /**

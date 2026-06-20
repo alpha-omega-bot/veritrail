@@ -105,10 +105,10 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### evidence
 
-- [ ] External content capture + hashing; signed evidence; large-graph
-      pagination. (decision→evidence cross-linking via `evidenceForDecision` done;
-      remaining cross-link work: `actionIds` join + bidirectional traversal — see
-      below)
+- [ ] External content capture + hashing; signed evidence. (decision→evidence
+      cross-linking via `evidenceForDecision` done; `list` offset/limit pagination
+      done — remaining: `actionIds` join + bidirectional traversal, windowed
+      `trace` traversal, external capture, signed evidence — see below)
 - [x] `trace()` depth cap + id-only visited set can drop in-range nodes/edges →
       incomplete provenance graph; and duplicate `derived_from` edges for repeated
       upstream ids. Fixed: switched to breadth-first traversal (every node reached
@@ -201,6 +201,19 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added evidence `list` pagination (M2 feature-depth, the
+  concrete piece of "large-graph pagination"). `list` now takes
+  `EvidenceListOptions` (`offset`/`limit` on top of the label filter): `offset`
+  clamps to `>= 0`, a negative `limit` yields an empty page, omitting `limit`
+  returns all from `offset` onward — consistent with the other modules' limit
+  handling. `get`/`evidenceForDecision` call `list` with label-only opts so they
+  are unaffected. Pure projection, tenant-scoped. Windowed `trace` traversal
+  remains the larger pagination piece. **Next:** vendor-risk SLA tracking (needs a
+  minor `VendorSchema` field — touches core schema, slightly heavier). After that
+  the contained backlog is essentially drained; remaining work needs a user call
+  (dep/network items: embeddings, external capture, live feeds, executor adapters;
+  or GA-maturity declarations for forensics/decision-memory).
 
 - **2026-06-20** — Added forensics shareable incident bundles (M2 feature-depth).
   New `incidentBundle(correlationId, opts?)` composes the existing primitives into

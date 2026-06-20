@@ -49,7 +49,11 @@ class EvidenceModule implements VeritrailModule {
     input: unknown,
     opts?: { labels?: Readonly<Record<string, string>> },
   ): Promise<Result<LedgerRecord, VeritrailError>>;
-  list(opts?: { labels?: Readonly<Record<string, string>> }): Promise<Evidence[]>;
+  list(opts?: {
+    labels?: Readonly<Record<string, string>>;
+    offset?: number; // skip from the start (clamped >= 0)
+    limit?: number; // page size; omit for all, negative → none
+  }): Promise<Evidence[]>;
   get(
     evidenceId: string,
     opts?: { labels?: Readonly<Record<string, string>> },
@@ -80,6 +84,10 @@ When `labels` are supplied, `list`, `get`, `evidenceForDecision`, `trace`, and
 carries every requested key/value pair. Trace edges to out-of-scope upstream
 evidence remain visible as dangling references, but the out-of-scope evidence is
 not loaded as a node.
+
+`list` accepts `offset`/`limit` to page through the attachment-ordered
+projection: `offset` is clamped to `>= 0`, a negative `limit` yields an empty
+page, and omitting `limit` returns everything from `offset` onward.
 
 `evidenceForDecision(decisionId)` answers "what evidence supports this decision":
 it returns every distinct piece of evidence whose `links.decisionIds` includes
@@ -141,5 +149,6 @@ This is a scaffold with a correct, deterministic baseline. Deferred to Phase 1:
   projects evidence by `links.decisionIds`. Remaining: surface
   `links.actionIds` similarly and join against `decision.recorded` / `action.*`
   events for bidirectional traversal.
-- **Large-graph pagination** — streaming/windowed traversal and result paging
-  for provenance graphs that exceed the depth cap or memory budget.
+- **Large-graph pagination** — `list` supports `offset`/`limit` paging. Remaining:
+  streaming/windowed `trace` traversal for provenance graphs that exceed the
+  depth cap or memory budget.
