@@ -287,6 +287,105 @@ describe('EvidenceModule.trace', () => {
     expect(isErr(res)).toBe(true);
     if (isErr(res)) expect(res.error.code).toBe('NOT_FOUND');
   });
+
+  it('emits one edge per (from,to) even when an upstream id is repeated', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach({ actorId: 'a', id: 'evd-b', kind: 'dataset', summary: 'b' });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-a',
+      kind: 'citation',
+      summary: 'a',
+      // The same upstream id listed twice must not produce duplicate edges.
+      links: { evidenceIds: ['evd-b', 'evd-b'] },
+    });
+
+    const graph = unwrap(await mod.trace('evd-a'));
+    expect(graph.nodes.map((n) => n.id).sort()).toEqual(['evd-a', 'evd-b']);
+    expect(graph.edges).toEqual([{ from: 'evd-a', to: 'evd-b', relation: 'derived_from' }]);
+  });
+
+  it('keeps a convergent node and its full subtree (diamond)', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    // a -> b, a -> c, b -> d, c -> d, d -> e.  d is reached via two paths.
+    await mod.attach({ actorId: 'a', id: 'evd-e', kind: 'dataset', summary: 'e' });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-d',
+      kind: 'dataset',
+      summary: 'd',
+      links: { evidenceIds: ['evd-e'] },
+    });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-b',
+      kind: 'tool_output',
+      summary: 'b',
+      links: { evidenceIds: ['evd-d'] },
+    });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-c',
+      kind: 'tool_output',
+      summary: 'c',
+      links: { evidenceIds: ['evd-d'] },
+    });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-a',
+      kind: 'citation',
+      summary: 'a',
+      links: { evidenceIds: ['evd-b', 'evd-c'] },
+    });
+
+    const graph = unwrap(await mod.trace('evd-a'));
+    // Every node present exactly once, including the convergent d and its child e.
+    expect(graph.nodes.map((n) => n.id).sort()).toEqual([
+      'evd-a',
+      'evd-b',
+      'evd-c',
+      'evd-d',
+      'evd-e',
+    ]);
+    expect(graph.nodes).toHaveLength(5);
+    // Both paths into d are recorded; d->e survives the convergence.
+    expect(graph.edges.map((e) => `${e.from}->${e.to}`).sort()).toEqual([
+      'evd-a->evd-b',
+      'evd-a->evd-c',
+      'evd-b->evd-d',
+      'evd-c->evd-d',
+      'evd-d->evd-e',
+    ]);
+  });
+
+  it('caps a long chain at MAX_TRACE_DEPTH without dropping shallower nodes', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    // Build a chain longer than the depth cap: c0 <- c1 <- ... <- c150 (root c150).
+    const length = 150;
+    await mod.attach({ actorId: 'a', id: 'evd-c0', kind: 'dataset', summary: 'c0' });
+    for (let i = 1; i <= length; i += 1) {
+      await mod.attach({
+        actorId: 'a',
+        id: `evd-c${i}`,
+        kind: 'dataset',
+        summary: `c${i}`,
+        links: { evidenceIds: [`evd-c${i - 1}`] },
+      });
+    }
+
+    const graph = unwrap(await mod.trace(`evd-c${length}`));
+    // Root is depth 0; the cap admits depths 0..100 inclusive = 101 nodes.
+    expect(graph.nodes).toHaveLength(101);
+    expect(graph.nodes[0]?.id).toBe(`evd-c${length}`);
+    // The shallow neighbours are always present (regression guard for the
+    // min-depth fix: nothing within range is pruned).
+    const ids = new Set(graph.nodes.map((n) => n.id));
+    expect(ids.has(`evd-c${length - 1}`)).toBe(true);
+    expect(ids.has(`evd-c${length - 50}`)).toBe(true);
+  });
 });
 
 describe('EvidenceModule.verifyContent', () => {

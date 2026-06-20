@@ -107,9 +107,11 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 - [ ] External content capture + hashing; signed evidence; full
       decision↔evidence cross-linking; large-graph pagination.
-- [ ] `trace()` depth cap + id-only visited set can drop in-range nodes/edges →
+- [x] `trace()` depth cap + id-only visited set can drop in-range nodes/edges →
       incomplete provenance graph; and duplicate `derived_from` edges for repeated
-      upstream ids. Fix traversal + dedupe edges. (review: medium + low)
+      upstream ids. Fixed: switched to breadth-first traversal (every node reached
+      at its minimum depth, so the cap only prunes what is genuinely beyond it)
+      and deduped edges by `(from, to)`. (review: medium + low)
 
 ### decision-memory
 
@@ -192,6 +194,19 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Fixed the evidence `trace()` provenance bug (M2, medium+low
+  review finding). Replaced the DFS-with-pop-time-`visited` traversal — which
+  could mark a node visited-unexpanded via a long path and then skip it (and its
+  in-range subtree) when later reached via a short path — with breadth-first
+  traversal, so every node is reached at its minimum depth and the
+  `MAX_TRACE_DEPTH` cap only prunes what is genuinely beyond it. Also deduped
+  `derived_from` edges by `(from, to)` so a repeated upstream id no longer emits
+  duplicate edges. Dangling-upstream edges and the cycle guard are preserved.
+  Added adversarial tests (repeated-id dedup, diamond convergence, >cap chain).
+  **Next:** continue evidence GA (external content capture + hashing, signed
+  evidence, decision↔evidence cross-linking, large-graph pagination), or return
+  to rollback GA depth (real executor adapters, snapshot stores).
 
 - **2026-06-20** — Restyled the web console to the AWS Cloudscape design system at
   the user's request ("pixel perfect" AWS look). Added
