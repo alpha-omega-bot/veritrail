@@ -144,6 +144,12 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 - [ ] Console to GA (live data, filtering, saved queries, integrity badge backed
       by live verify).
+- [x] Restyle the console to the AWS Cloudscape design system
+      (`@cloudscape-design/components`): `TopNavigation` + `AppLayout` +
+      `SideNavigation` shell, and all five views rebuilt on Cloudscape
+      `Container`/`Table`/`Header`/`ColumnLayout`/`StatusIndicator`/`Select`/etc.
+      Bespoke CSS + components removed; `src/status.tsx` maps domain types to
+      `StatusIndicator`. (user request, 2026-06-20)
 - [x] Remove internal engineering/maturity wording from user-facing console copy.
       The frontend must not expose terms such as "Phase 1", "scaffold", "mock",
       TODOs, roadmap labels, or session-only discussion. Use neutral operator
@@ -187,6 +193,20 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-20** — Restyled the web console to the AWS Cloudscape design system at
+  the user's request ("pixel perfect" AWS look). Added
+  `@cloudscape-design/components` + `@cloudscape-design/global-styles`, rebuilt the
+  shell as `TopNavigation` + `AppLayout` + `SideNavigation`, and rewrote all five
+  views (Overview/Ledger/Spend/Vendor Risk/Forensics) on Cloudscape primitives
+  (`ContentLayout`/`Container`/`Header`/`Table`/`ColumnLayout`/`KeyValuePairs`/
+  `StatusIndicator`/`ProgressBar`/`Select`/`Alert`/`Spinner`/`Badge`/`Box`). Added
+  `src/status.tsx` (domain → `StatusIndicator`); deleted the bespoke `styles.css`
+  and `components/` (Nav/DataTable/StatCard/Badge/Loading/ErrorBanner). `tsc` +
+  `vite build` pass; root `verify` green (325 tests). Note: the console is an app
+  edge, so a UI library there does not violate the core's dependency-light rule.
+  **Next:** finish rollback GA (real executor adapters, snapshot stores), then
+  forensics; console-to-GA (live data wiring) remains a separate P3 item.
+
 - **2026-06-20** — Added rollback saga/partial-failure semantics (M2). `execute`
   now takes an optional `mode`: `best_effort` (default — current behavior, attempt
   every step) or `stop_on_failure` (halt at the first failing step for ordered
@@ -194,9 +214,7 @@ tests) — they are done:
   summary: `completed` (no step failed), per-status `counts`, and `haltedAt`.
   Benign skips (`none` strategy, `already_rolled_back`) don't count as failures or
   halt. Backward compatible (`RollbackExecuteOptions extends RollbackRecordOptions`).
-  Added saga-mode tests. **Next:** rollback real executor adapters + snapshot
-  stores for `restore`, then forensics; AND a console restyle to AWS Cloudscape
-  look (user request 2026-06-20).
+  Added saga-mode tests.
 
 - **2026-06-20** — Started Milestone 2 with the two rollback correctness findings.
   (1) `execute()` is now idempotent/retry-safe: it skips steps whose
