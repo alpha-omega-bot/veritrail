@@ -49,16 +49,12 @@ src/
   types.ts        API payload interfaces
   mocks.ts        local sample data
   format.ts       presentation helpers (currency, dates, hashes)
-  App.tsx         hash-based navigation (no router dependency)
-  main.tsx        React root
-  styles.css      dark theme
-  components/      Nav, StatCard, DataTable, Badge, Loading, ErrorBanner
+  status.tsx      domain → Cloudscape StatusIndicator mapping
+  App.tsx         TopNavigation + AppLayout + SideNavigation shell; hash routing
+  main.tsx        React root (imports Cloudscape global styles)
   views/          Overview, Ledger, Spend, Vendor Risk, Forensics
 ```
 
-Navigation is hash-based (`#/overview`, `#/ledger`, …) — no router dependency.
-The app uses only React 18 function components and hooks.
-
-```
-
-```
+The UI is built with the **[AWS Cloudscape design system](https://cloudscape.design/)**
+(`@cloudscape-design/components`) for an AWS-console look and feel. Navigation is
+hash-based (`#/overview`, `#/ledger`, …) — no router dependency.
