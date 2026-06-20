@@ -36,7 +36,11 @@ appending an `action.rolled_back` event.
   is a success no-op that records intent only. On success an `action.rolled_back`
   event is appended (carrying the executor's `compensationActionId` when
   provided); on executor failure — or a failed append — the step is `skipped` and
-  no fact is written; `none` strategies are skipped outright.
+  no fact is written; `none` strategies are skipped outright. By default
+  (`best_effort`) every step is attempted; pass `{ mode: 'stop_on_failure' }` to
+  halt at the first failing step (reported in `haltedAt`) for ordered, dependent
+  unwinds. The returned `RollbackResult` summarizes the run (`completed`,
+  per-status `counts`).
 
 ## Public API
 
@@ -58,7 +62,12 @@ interface RollbackOutcome {
 }
 interface RollbackResult {
   outcomes: RollbackOutcome[];
+  completed: boolean; // true when no step failed
+  counts: Record<RollbackOutcome['status'], number>;
+  haltedAt?: string; // actionId that halted a stop_on_failure run
 }
+
+type RollbackMode = 'best_effort' | 'stop_on_failure'; // default best_effort
 
 interface CompensationContext {
   /** Stable per-action key; an executor must run the side effect at most once per key. */
@@ -79,6 +88,11 @@ interface RollbackRecordOptions {
   readonly labels?: Readonly<Record<string, string>>;
 }
 
+interface RollbackExecuteOptions extends RollbackRecordOptions {
+  /** Failure handling. Defaults to `best_effort`. */
+  readonly mode?: RollbackMode;
+}
+
 class RollbackModule implements VeritrailModule {
   readonly info: ModuleInfo; // { name, version, capability: 'rollback' }
   constructor(ctx: ModuleContext);
@@ -93,7 +107,7 @@ class RollbackModule implements VeritrailModule {
   execute(
     plan: RollbackPlan,
     executor?: CompensationExecutor,
-    opts?: RollbackRecordOptions,
+    opts?: RollbackExecuteOptions,
   ): Promise<RollbackResult>;
 }
 
@@ -164,9 +178,9 @@ if (plan.ok) {
 
 ## Phase 1 TODO
 
-- **Saga / partial-failure semantics** — stop-on-first-failure vs.
-  best-effort modes, retries with backoff, and a recorded plan-execution
-  summary for partially-applied plans.
+- **Saga / partial-failure semantics** — `best_effort` vs. `stop_on_failure`
+  modes and a recorded execution summary are implemented; retries with backoff
+  remain.
 - **Real executor adapters** — HTTP/inverse-call, snapshot-`restore`, and
   message-queue compensators behind the `CompensationExecutor` interface.
 - **Snapshot stores** — resolve `snapshotRef` against a content-addressed store

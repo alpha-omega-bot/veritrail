@@ -84,8 +84,8 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### rollback
 
-- [ ] Saga/partial-failure semantics; real executor adapters; snapshot stores for
-      the `restore` strategy. (idempotency keys done — see below)
+- [ ] Real executor adapters; snapshot stores for the `restore` strategy; saga
+      retries-with-backoff. (idempotency keys + best_effort/stop_on_failure modes + execution summary done — see below)
 - [x] `execute()` loses a real compensation if the `action.rolled_back` append
       fails after a successful side effect — now retry-safe: `execute` skips
       steps already recorded as rolled back (`already_rolled_back`) and passes an
@@ -186,6 +186,17 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added rollback saga/partial-failure semantics (M2). `execute`
+  now takes an optional `mode`: `best_effort` (default — current behavior, attempt
+  every step) or `stop_on_failure` (halt at the first failing step for ordered
+  dependent unwinds, reported in `haltedAt`). `RollbackResult` gained an execution
+  summary: `completed` (no step failed), per-status `counts`, and `haltedAt`.
+  Benign skips (`none` strategy, `already_rolled_back`) don't count as failures or
+  halt. Backward compatible (`RollbackExecuteOptions extends RollbackRecordOptions`).
+  Added saga-mode tests. **Next:** rollback real executor adapters + snapshot
+  stores for `restore`, then forensics; AND a console restyle to AWS Cloudscape
+  look (user request 2026-06-20).
 
 - **2026-06-20** — Started Milestone 2 with the two rollback correctness findings.
   (1) `execute()` is now idempotent/retry-safe: it skips steps whose
