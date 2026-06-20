@@ -572,6 +572,99 @@ describe('ForensicsModule.rankRootCauses', () => {
   });
 });
 
+describe('ForensicsModule.incidentBundle', () => {
+  it('composes incident, ranked root causes, and the top cause blast radius', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    // root failure -> downstream note -> downstream rollback, all in run-1.
+    const failure = await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      payload: { actionId: 'act-1', error: 'boom' },
+    });
+    const down1 = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-2',
+      correlationId: 'run-1',
+      causationId: failure.id,
+      payload: { text: 'downstream' },
+    });
+    await append(ledger, clock, {
+      type: 'action.denied',
+      actorId: 'agent-2',
+      correlationId: 'run-1',
+      causationId: down1.id,
+      payload: { actionId: 'act-2', reason: 'blocked' },
+    });
+
+    const bundle = await createForensicsModule(ctx).incidentBundle('run-1');
+
+    expect(bundle.correlationId).toBe('run-1');
+    expect(bundle.generatedAt).toBe(clock.now());
+    // Incident report covers the whole correlation.
+    expect(bundle.incident.entries).toHaveLength(3);
+    expect(bundle.incident.failures).toBe(1);
+    expect(bundle.incident.denials).toBe(1);
+    // Two candidate root causes (the failure and the denial); the failure has the
+    // larger forward radius so it ranks first.
+    expect(bundle.rootCauses.map((c) => c.id)).toEqual([failure.id, expect.any(String)]);
+    expect(bundle.rootCauses[0]?.id).toBe(failure.id);
+    // Top cause blast radius is the failure's forward reach (itself + 2 downstream).
+    expect(bundle.topRootCauseBlastRadius?.rootId).toBe(failure.id);
+    expect(bundle.topRootCauseBlastRadius?.impactedCount).toBe(2);
+  });
+
+  it('returns a bundle with no root cause for a clean correlation', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    await append(ledger, clock, {
+      type: 'action.executed',
+      actorId: 'agent-1',
+      correlationId: 'run-ok',
+      payload: { actionId: 'act-1', outcome: 'success' },
+    });
+
+    const bundle = await createForensicsModule(ctx).incidentBundle('run-ok');
+    expect(bundle.incident.entries).toHaveLength(1);
+    expect(bundle.rootCauses).toEqual([]);
+    expect(bundle.topRootCauseBlastRadius).toBeNull();
+  });
+
+  it('returns an empty bundle for an unknown correlation', async () => {
+    const { ctx } = makeCtx();
+    const bundle = await createForensicsModule(ctx).incidentBundle('run-missing');
+    expect(bundle.incident.entries).toEqual([]);
+    expect(bundle.rootCauses).toEqual([]);
+    expect(bundle.topRootCauseBlastRadius).toBeNull();
+  });
+
+  it('scopes every component to the tenant labels', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    const acme = { tenant: 'acme', project: 'alpha' };
+    const other = { tenant: 'other', project: 'alpha' };
+    const acmeFail = await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      labels: acme,
+      payload: { actionId: 'act-a', error: 'boom' },
+    });
+    await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-9',
+      correlationId: 'run-1',
+      labels: other,
+      causationId: acmeFail.id,
+      payload: { text: 'other-tenant downstream' },
+    });
+
+    const bundle = await createForensicsModule(ctx).incidentBundle('run-1', { labels: acme });
+    expect(bundle.incident.entries).toHaveLength(1); // only the acme failure
+    expect(bundle.rootCauses.map((c) => c.id)).toEqual([acmeFail.id]);
+    // The out-of-scope downstream note is not counted in the radius.
+    expect(bundle.topRootCauseBlastRadius?.impactedCount).toBe(0);
+  });
+});
+
 describe('summarize', () => {
   it('summarizes denials with reason', () => {
     const s = summarize({

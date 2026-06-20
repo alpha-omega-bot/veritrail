@@ -13,5 +13,6 @@ export {
   type IncidentReport,
   type BlastRadiusReport,
   type RootCauseCandidate,
+  type IncidentBundle,
 } from './engine.js';
 export { summarize } from './summarize.js';

@@ -100,8 +100,8 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### forensics
 
-- [ ] Anomaly detection, snapshot diffs, shareable incident bundles.
-      (blast-radius analysis + root-cause ranking done — see below)
+- [ ] Anomaly detection, snapshot diffs. (blast-radius analysis + root-cause
+      ranking + shareable incident bundles done — see below)
 
 ### evidence
 
@@ -201,6 +201,20 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added forensics shareable incident bundles (M2 feature-depth).
+  New `incidentBundle(correlationId, opts?)` composes the existing primitives into
+  one exportable `IncidentBundle`: the `incident` report, the ranked
+  `rankRootCauses` candidates, and the `blastRadius` of the top-ranked cause (null
+  when none), plus a `generatedAt` clock stamp. Pure composition — no new deps,
+  tenant-scoped end to end. Forensics now has: timeline, incident, causeChain,
+  blastRadius, root-cause ranking, and bundles; only anomaly detection + snapshot
+  diffs remain (snapshot diffs couple to deferred rollback snapshot stores).
+  **Next:** remaining contained items — evidence large-graph pagination,
+  vendor-risk SLA tracking (needs a `VendorSchema` field). The dep/network items
+  (embeddings, external capture, executor adapters) still need a user call.
+  Separately, no module has been declared GA yet — that maturity flip
+  (README/ROADMAP/capabilities.md) should be surfaced to the user per the DoD.
 
 - **2026-06-20** — Added decision-memory outcome linkage (M2 feature-depth). New
   `outcomesFor(decisionId, opts?)` answers "did the decision work?": it looks up
