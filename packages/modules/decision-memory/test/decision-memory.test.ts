@@ -136,6 +136,18 @@ describe('list', () => {
     expect(limited.map((d) => d.id)).toEqual(['dec_c', 'dec_b']);
   });
 
+  it('clamps a non-positive list limit to an empty result', async () => {
+    const { module } = build();
+    await module.record({ id: 'dec_a', actorId: 'a', summary: 'x' });
+    await module.record({ id: 'dec_b', actorId: 'a', summary: 'y' });
+
+    // limit=0 and negative limits both yield zero rows — a negative limit must
+    // NOT fall through to returning every decision.
+    expect(await module.list({ limit: 0 })).toEqual([]);
+    expect(await module.list({ limit: -1 })).toEqual([]);
+    expect(await module.list({ limit: -100 })).toEqual([]);
+  });
+
   it('filters list projections by ledger labels', async () => {
     const { module } = build();
     await module.record(
@@ -215,16 +227,25 @@ describe('recall', () => {
     expect(matches.some((m) => m.decision.id === 'dec_cache')).toBe(false);
   });
 
-  it('computes score as sharedTokens / queryTokens', async () => {
+  it('computes score as distinctSharedTokens / distinctQueryTokens', async () => {
     const { module } = build();
     await module.record({
       id: 'dec_x',
       actorId: 'a',
       summary: 'database engine selection',
     });
-    // Query has 3 tokens; doc shares "database" and "engine" => 2/3.
+    // Query has 3 distinct tokens; doc shares "database" and "engine" => 2/3.
     const matches = await module.recall({ text: 'database engine missing' });
     expect(matches[0]?.score).toBeCloseTo(2 / 3, 10);
+  });
+
+  it('counts distinct query tokens, so repeated tokens do not skew the score', async () => {
+    const { module } = build();
+    await module.record({ id: 'dec_x', actorId: 'a', summary: 'database engine' });
+    // "database" repeated: distinct query tokens are {database, engine} and the
+    // doc contains both, so a full match scores 1 — not 2/3 from raw counting.
+    const matches = await module.recall({ text: 'database database engine' });
+    expect(matches[0]?.score).toBeCloseTo(1, 10);
   });
 
   it('filters recall by actorId', async () => {
@@ -281,6 +302,18 @@ describe('recall', () => {
 
     const matches = await module.recall({ text: 'topic', limit: 1 });
     expect(matches).toHaveLength(1);
+  });
+
+  it('clamps a non-positive recall limit to an empty result', async () => {
+    const { module } = build();
+    await module.record({ id: 'dec_a', actorId: 'a', summary: 'topic' });
+    await module.record({ id: 'dec_b', actorId: 'a', summary: 'topic' });
+
+    // A negative limit clamps to empty rather than silently using the default,
+    // both in scored mode and empty-text (recency) mode.
+    expect(await module.recall({ text: 'topic', limit: 0 })).toEqual([]);
+    expect(await module.recall({ text: 'topic', limit: -5 })).toEqual([]);
+    expect(await module.recall({ text: '', limit: -5 })).toEqual([]);
   });
 
   it('filters recall projections by ledger labels before ranking', async () => {

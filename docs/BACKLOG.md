@@ -117,9 +117,14 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 - [ ] Semantic recall via embeddings; outcome linkage (did the decision work?);
       recency/decay weighting.
-- [ ] `recall` score denominator uses distinct-token set size, diverging from the
+- [x] `recall` score denominator uses distinct-token set size, diverging from the
       documented `sharedTokens / queryTokens` for repeated tokens; and negative
-      `limit` in `list()` returns ALL — clamp/validate. (review: 2× low)
+      `limit` in `list()` returns ALL — clamp/validate. Fixed: `list()` and
+      `recall()` now clamp a negative limit to an empty result (consistent with
+      `limit=0`), and the docs/READMEs now correctly describe the implemented
+      `distinctSharedTokens / distinctQueryTokens` score (the distinct/distinct
+      ratio is the correct `[0,1]` metric, so the doc was wrong, not the code).
+      (review: 2× low)
 
 ### vendor-risk
 
@@ -194,6 +199,19 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Fixed the decision-memory `recall`/`list` review findings (M2,
+  2× low). Negative `limit` no longer returns everything: `list()` and `recall()`
+  clamp a negative limit to an empty result (consistent with `limit=0`), and
+  `recall` no longer silently falls back to the default on a negative limit.
+  Resolved the score-denominator finding by correcting the docs (JSDoc + README)
+  rather than the code: the implemented `distinctSharedTokens /
+distinctQueryTokens` ratio is the correct `[0,1]` metric (a full match scores
+  1 regardless of token repetition), so the documentation was wrong. Added
+  adversarial tests: repeated-query-token score, and non-positive limit clamping
+  for both `list` and `recall`. **Next:** decision-memory GA depth (semantic
+  recall via embeddings, outcome linkage, recency decay) or vendor-risk feeds,
+  and the remaining rollback GA depth.
 
 - **2026-06-20** — Fixed the evidence `trace()` provenance bug (M2, medium+low
   review finding). Replaced the DFS-with-pop-time-`visited` traversal — which

@@ -29,8 +29,9 @@ export interface DecisionMatch {
   /** The matched decision. */
   readonly decision: Decision;
   /**
-   * Relevance score in `[0, 1]`: the fraction of query tokens shared with the
-   * decision's searchable text. Empty-text recall yields a score of `1`.
+   * Relevance score in `[0, 1]`: the fraction of *distinct* query tokens that
+   * appear in the decision's searchable text. Empty-text recall yields a score
+   * of `1`.
    */
   readonly score: number;
 }
@@ -140,8 +141,10 @@ export class DecisionMemoryModule implements VeritrailModule {
       ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
     });
     decisions.reverse(); // ledger order is oldest-first; surface newest first.
-    if (opts?.limit !== undefined && opts.limit >= 0) {
-      return decisions.slice(0, opts.limit);
+    if (opts?.limit !== undefined) {
+      // A negative limit clamps to an empty result (consistent with limit=0),
+      // rather than falling through and returning everything.
+      return decisions.slice(0, Math.max(0, opts.limit));
     }
     return decisions;
   }
@@ -163,17 +166,20 @@ export class DecisionMemoryModule implements VeritrailModule {
    * Recall decisions relevant to `query.text`, ranked by lexical overlap.
    *
    * The query text is tokenized (lowercased, split on non-alphanumerics, empties
-   * dropped). Each decision is scored as `sharedTokens / max(1, queryTokens)`
-   * against the tokens of `summary + ' ' + rationale + ' ' + chosen`. Results are
-   * filtered by `actorId`, sorted by score descending then most-recent, and
-   * truncated to `limit` (default {@link DEFAULT_RECALL_LIMIT}).
+   * dropped) and reduced to its *distinct* tokens. Each decision is scored as
+   * `distinctSharedTokens / distinctQueryTokens` against the distinct tokens of
+   * `summary + ' ' + rationale + ' ' + chosen` — so a full match scores `1`
+   * regardless of token repetition. Results are filtered by `actorId`, sorted by
+   * score descending then most-recent, and truncated to `limit` (default
+   * {@link DEFAULT_RECALL_LIMIT}).
    *
    * When `query.text` is absent or has no tokens, returns the most-recent
    * decisions (each with score `1`), filtered by `actorId`.
    */
   async recall(query: RecallQuery): Promise<DecisionMatch[]> {
-    const limit =
-      query.limit !== undefined && query.limit >= 0 ? query.limit : DEFAULT_RECALL_LIMIT;
+    // undefined → default; a supplied limit is honored, with negatives clamped
+    // to 0 (empty) rather than silently falling back to the default.
+    const limit = query.limit === undefined ? DEFAULT_RECALL_LIMIT : Math.max(0, query.limit);
 
     // `#projectDecisions` returns oldest-first; index gives recency tie-breaks.
     const decisions = await this.#projectDecisions({
