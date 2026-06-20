@@ -105,8 +105,10 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### evidence
 
-- [ ] External content capture + hashing; signed evidence; full
-      decision↔evidence cross-linking; large-graph pagination.
+- [ ] External content capture + hashing; signed evidence; large-graph
+      pagination. (decision→evidence cross-linking via `evidenceForDecision` done;
+      remaining cross-link work: `actionIds` join + bidirectional traversal — see
+      below)
 - [x] `trace()` depth cap + id-only visited set can drop in-range nodes/edges →
       incomplete provenance graph; and duplicate `derived_from` edges for repeated
       upstream ids. Fixed: switched to breadth-first traversal (every node reached
@@ -199,6 +201,19 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added evidence decision↔evidence cross-linking (M2
+  feature-depth). New `evidenceForDecision(decisionId, opts?)` projects every
+  distinct piece of evidence whose `links.decisionIds` includes the id —
+  latest-attachment-wins (a link added/removed by a re-attach is honored), id-
+  sorted, tenant-scoped. `links.decisionIds` already exists on `EvidenceSchema`,
+  so this is a pure projection: no schema change, no new dep. Advanced (not fully
+  cleared) the cross-link Phase 1 TODO — `actionIds` join + bidirectional
+  traversal remain. **Next:** remaining contained items (vendor-risk SLA tracking
+  needs a `VendorSchema` change so it's heavier; forensics anomaly/snapshot/
+  bundles; evidence large-graph pagination). Dep/network items (embeddings,
+  external capture, executor adapters) and decision outcome-linkage still need a
+  user call.
 
 - **2026-06-20** — Added decision-memory recency weighting (M2 feature-depth).
   `recall` now accepts an opt-in `recencyHalfLifeMs`: when set, the lexical score

@@ -54,6 +54,10 @@ class EvidenceModule implements VeritrailModule {
     evidenceId: string,
     opts?: { labels?: Readonly<Record<string, string>> },
   ): Promise<Evidence | null>;
+  evidenceForDecision(
+    decisionId: string,
+    opts?: { labels?: Readonly<Record<string, string>> },
+  ): Promise<Evidence[]>;
   trace(
     evidenceId: string,
     opts?: { labels?: Readonly<Record<string, string>> },
@@ -71,10 +75,16 @@ function createEvidenceModule(ctx: ModuleContext): EvidenceModule;
 `attach` expects an object carrying the ledger envelope's `actorId` (required)
 and optional `correlationId`, plus the evidence body. The evidence is validated
 with `EvidenceSchema`; an `id` is assigned via `ctx.ids.next('evd')` when absent.
-When `labels` are supplied, `list`, `get`, `trace`, and `verifyContent` only
-project `evidence.attached` events whose ledger envelope carries every requested
-key/value pair. Trace edges to out-of-scope upstream evidence remain visible as
-dangling references, but the out-of-scope evidence is not loaded as a node.
+When `labels` are supplied, `list`, `get`, `evidenceForDecision`, `trace`, and
+`verifyContent` only project `evidence.attached` events whose ledger envelope
+carries every requested key/value pair. Trace edges to out-of-scope upstream
+evidence remain visible as dangling references, but the out-of-scope evidence is
+not loaded as a node.
+
+`evidenceForDecision(decisionId)` answers "what evidence supports this decision":
+it returns every distinct piece of evidence whose `links.decisionIds` includes
+the id, latest-attachment-wins (so a link added or removed by a later
+re-attachment is honored), in ascending id order.
 
 Failures are returned as `Result` (`VALIDATION` for bad input, `NOT_FOUND` for
 missing evidence or a missing `contentHash`) — never thrown.
@@ -127,8 +137,9 @@ This is a scaffold with a correct, deterministic baseline. Deferred to Phase 1:
   rather than trusting a caller-supplied `contentHash`.
 - **Signed evidence** — attest evidence with the platform `Signer` so provenance
   edges are independently verifiable.
-- **Decision ⇄ evidence cross-links** — surface `links.decisionIds` /
-  `links.actionIds` in the graph and join against `decision.recorded` /
-  `action.*` events.
+- **Decision ⇄ evidence cross-links** — `evidenceForDecision(decisionId)`
+  projects evidence by `links.decisionIds`. Remaining: surface
+  `links.actionIds` similarly and join against `decision.recorded` / `action.*`
+  events for bidirectional traversal.
 - **Large-graph pagination** — streaming/windowed traversal and result paging
   for provenance graphs that exceed the depth cap or memory budget.

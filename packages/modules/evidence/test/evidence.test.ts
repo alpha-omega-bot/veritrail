@@ -165,6 +165,102 @@ describe('EvidenceModule.get', () => {
   });
 });
 
+describe('EvidenceModule.evidenceForDecision', () => {
+  it('returns every distinct evidence that links the decision, id-sorted', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-b',
+      kind: 'document',
+      summary: 'supports dec-1',
+      links: { decisionIds: ['dec-1'] },
+    });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-a',
+      kind: 'dataset',
+      summary: 'also supports dec-1',
+      links: { decisionIds: ['dec-1', 'dec-2'] },
+    });
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-c',
+      kind: 'document',
+      summary: 'supports dec-2 only',
+      links: { decisionIds: ['dec-2'] },
+    });
+
+    const forDec1 = await mod.evidenceForDecision('dec-1');
+    expect(forDec1.map((e) => e.id)).toEqual(['evd-a', 'evd-b']);
+    const forDec2 = await mod.evidenceForDecision('dec-2');
+    expect(forDec2.map((e) => e.id)).toEqual(['evd-a', 'evd-c']);
+  });
+
+  it('returns an empty list when no evidence links the decision', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach({ actorId: 'a', id: 'evd-1', kind: 'document', summary: 'unlinked' });
+    expect(await mod.evidenceForDecision('dec-x')).toEqual([]);
+  });
+
+  it('honors the latest attachment when a link is later removed', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-1',
+      kind: 'document',
+      summary: 'v1 links dec-1',
+      links: { decisionIds: ['dec-1'] },
+    });
+    // Re-attach the same id without the link: the latest version wins.
+    await mod.attach({
+      actorId: 'a',
+      id: 'evd-1',
+      kind: 'document',
+      summary: 'v2 drops the link',
+      links: { decisionIds: [] },
+    });
+    expect(await mod.evidenceForDecision('dec-1')).toEqual([]);
+  });
+
+  it('only projects evidence inside the ledger-label scope', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach(
+      {
+        actorId: 'a',
+        id: 'evd-acme',
+        kind: 'document',
+        summary: 'acme',
+        links: { decisionIds: ['dec-1'] },
+      },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    await mod.attach(
+      {
+        actorId: 'a',
+        id: 'evd-other',
+        kind: 'document',
+        summary: 'other',
+        links: { decisionIds: ['dec-1'] },
+      },
+      { labels: { tenant: 'other', project: 'alpha' } },
+    );
+
+    const scoped = await mod.evidenceForDecision('dec-1', {
+      labels: { tenant: 'acme', project: 'alpha' },
+    });
+    expect(scoped.map((e) => e.id)).toEqual(['evd-acme']);
+    // Unscoped sees both.
+    expect((await mod.evidenceForDecision('dec-1')).map((e) => e.id)).toEqual([
+      'evd-acme',
+      'evd-other',
+    ]);
+  });
+});
+
 describe('EvidenceModule.trace', () => {
   it('walks a 3-node derived_from chain', async () => {
     const { ctx } = makeCtx();
