@@ -450,26 +450,29 @@ function registerRoutes(
   });
 
   // ---- evidence ---------------------------------------------------------
-  app.post('/api/evidence', unscopedWriteRoute(['ingest']), async (request, reply) =>
-    replyResult(reply, await evidence.attach(request.body)),
+  app.post('/api/evidence', writeRoute(['ingest']), async (request, reply) =>
+    replyResult(reply, await evidence.attach(request.body, evidenceOptions(request.principal))),
   );
 
-  app.get('/api/evidence', unscopedReadRoute(evidenceRead), async (_request, reply) =>
-    reply.send(await evidence.list()),
+  app.get('/api/evidence', readRoute(evidenceRead), async (request, reply) =>
+    reply.send(await evidence.list(evidenceOptions(request.principal))),
   );
 
-  app.get('/api/evidence/:id/trace', unscopedReadRoute(evidenceRead), async (request, reply) => {
+  app.get('/api/evidence/:id/trace', readRoute(evidenceRead), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
-    return replyResult(reply, await evidence.trace(id));
+    return replyResult(reply, await evidence.trace(id, evidenceOptions(request.principal)));
   });
 
-  app.post('/api/evidence/:id/verify', unscopedReadRoute(evidenceRead), async (request, reply) => {
+  app.post('/api/evidence/:id/verify', readRoute(evidenceRead), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
     const content = (request.body as { content?: unknown })?.content;
     if (typeof content !== 'string') {
       return replyError(reply, validationError('content (string) is required'));
     }
-    return replyResult(reply, await evidence.verifyContent(id, content));
+    return replyResult(
+      reply,
+      await evidence.verifyContent(id, content, evidenceOptions(request.principal)),
+    );
   });
 
   // ---- vendor risk ------------------------------------------------------
@@ -684,6 +687,13 @@ function decisionRecordOptions(
 }
 
 function decisionProjectionOptions(
+  principal: ApiKeyPrincipal | undefined,
+): { labels?: Readonly<Record<string, string>> } | undefined {
+  const labelScope = principal?.labelScope;
+  return labelScope === undefined ? undefined : { labels: labelScope };
+}
+
+function evidenceOptions(
   principal: ApiKeyPrincipal | undefined,
 ): { labels?: Readonly<Record<string, string>> } | undefined {
   const labelScope = principal?.labelScope;

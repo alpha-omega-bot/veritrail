@@ -60,6 +60,25 @@ describe('EvidenceModule.attach', () => {
     expect(all).toHaveLength(1);
   });
 
+  it('records optional ledger labels on the evidence fact', async () => {
+    const { ctx, ledger } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+
+    const res = await mod.attach(
+      {
+        actorId: 'agent-1',
+        id: 'evd-scoped',
+        kind: 'document',
+        summary: 'scoped evidence',
+      },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    expect(isOk(res)).toBe(true);
+
+    const all = await ledger.query({ types: ['evidence.attached'] });
+    expect(all[0]?.event.labels).toEqual({ tenant: 'acme', project: 'alpha' });
+  });
+
   it('attaches evidence with a contentHash and a supplied id', async () => {
     const { ctx } = makeCtx();
     const mod = createEvidenceModule(ctx);
@@ -122,6 +141,27 @@ describe('EvidenceModule.get', () => {
     const { ctx } = makeCtx();
     const mod = createEvidenceModule(ctx);
     expect(await mod.get('evd-nope')).toBeNull();
+  });
+
+  it('filters list and get projections by ledger labels', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+
+    await mod.attach(
+      { actorId: 'a', id: 'evd-alpha', kind: 'document', summary: 'alpha' },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    await mod.attach(
+      { actorId: 'a', id: 'evd-beta', kind: 'document', summary: 'beta' },
+      { labels: { tenant: 'acme', project: 'beta' } },
+    );
+
+    const scoped = await mod.list({ labels: { tenant: 'acme', project: 'alpha' } });
+    expect(scoped.map((evidence) => evidence.id)).toEqual(['evd-alpha']);
+    expect(
+      await mod.get('evd-alpha', { labels: { tenant: 'acme', project: 'alpha' } }),
+    ).toMatchObject({ id: 'evd-alpha' });
+    expect(await mod.get('evd-beta', { labels: { tenant: 'acme', project: 'alpha' } })).toBeNull();
   });
 });
 
@@ -204,6 +244,42 @@ describe('EvidenceModule.trace', () => {
     expect(graph.edges).toEqual([{ from: 'evd-a', to: 'evd-missing', relation: 'derived_from' }]);
   });
 
+  it('builds traces only from evidence inside the ledger-label projection', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await mod.attach(
+      { actorId: 'a', id: 'evd-source', kind: 'dataset', summary: 'source' },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    await mod.attach(
+      {
+        actorId: 'a',
+        id: 'evd-claim',
+        kind: 'citation',
+        summary: 'claim',
+        links: { evidenceIds: ['evd-source', 'evd-beta'] },
+      },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    await mod.attach(
+      { actorId: 'a', id: 'evd-beta', kind: 'dataset', summary: 'sibling' },
+      { labels: { tenant: 'acme', project: 'beta' } },
+    );
+
+    const graph = unwrap(
+      await mod.trace('evd-claim', { labels: { tenant: 'acme', project: 'alpha' } }),
+    );
+    expect(graph.nodes.map((node) => node.id).sort()).toEqual(['evd-claim', 'evd-source']);
+    expect(graph.edges.map((edge) => `${edge.from}->${edge.to}`).sort()).toEqual([
+      'evd-claim->evd-beta',
+      'evd-claim->evd-source',
+    ]);
+
+    const hidden = await mod.trace('evd-beta', { labels: { tenant: 'acme', project: 'alpha' } });
+    expect(isErr(hidden)).toBe(true);
+    if (isErr(hidden)) expect(hidden.error.code).toBe('NOT_FOUND');
+  });
+
   it('returns NOT_FOUND when the root is missing', async () => {
     const { ctx } = makeCtx();
     const mod = createEvidenceModule(ctx);
@@ -245,6 +321,28 @@ describe('EvidenceModule.verifyContent', () => {
     const res = await mod.verifyContent('evd-1', 'tampered');
     expect(isOk(res)).toBe(true);
     expect(unwrap(res)).toBe(false);
+  });
+
+  it('returns NOT_FOUND when scoped labels hide the evidence content hash', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const content = 'scoped content';
+    await mod.attach(
+      {
+        actorId: 'a',
+        id: 'evd-1',
+        kind: 'document',
+        summary: 'doc',
+        contentHash: sha256Hex(content),
+      },
+      { labels: { tenant: 'acme', project: 'beta' } },
+    );
+
+    const res = await mod.verifyContent('evd-1', content, {
+      labels: { tenant: 'acme', project: 'alpha' },
+    });
+    expect(isErr(res)).toBe(true);
+    if (isErr(res)) expect(res.error.code).toBe('NOT_FOUND');
   });
 
   it('returns NOT_FOUND when the evidence is missing', async () => {

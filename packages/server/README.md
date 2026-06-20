@@ -75,14 +75,16 @@ label budgets inside the key's label scope, and status only counts charge record
 that carry the complete configured label scope. Scoped writes to `/api/decisions`
 stamp the configured labels onto the recorded decision fact, while
 `/api/decisions` and `/api/decisions/recall` only project decisions carrying
-those labels.
+those labels. Scoped writes to `/api/evidence` stamp the same labels onto
+`evidence.attached` facts, while evidence list, trace, and content verification
+only project evidence carrying those labels.
 
 Routes that read or mutate server-held configuration, whole-ledger integrity, or
 module projections without tenant-filtered semantics require an unscoped key.
 This includes permissions policy routes, audit summary/verify/export, spend
-budget mutation, evidence, vendor risk, forensics incident/cause-chain, and
-rollback planning/execution. Tenant-scoped projections should be added route by
-route once each module has an explicit tenant model.
+budget mutation, vendor risk, forensics incident/cause-chain, and rollback
+planning/execution. Tenant-scoped projections should be added route by route once
+each module has an explicit tenant model.
 
 ```ts
 const app = await buildServer({
