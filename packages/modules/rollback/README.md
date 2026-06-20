@@ -56,16 +56,42 @@ type CompensationExecutor = (
   step: RollbackStep,
 ) => Promise<{ ok: boolean; detail?: string; compensationActionId?: string }>;
 
+interface RollbackProjectionOptions {
+  /** Restrict planning to records carrying these exact ledger labels. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+interface RollbackRecordOptions {
+  /** Labels to write onto appended `action.rolled_back` event envelopes. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
 class RollbackModule implements VeritrailModule {
   readonly info: ModuleInfo; // { name, version, capability: 'rollback' }
   constructor(ctx: ModuleContext);
-  planForAction(actionId: string): Promise<Result<RollbackPlan, VeritrailError>>;
-  planForCorrelation(correlationId: string): Promise<RollbackPlan>;
-  execute(plan: RollbackPlan, executor?: CompensationExecutor): Promise<RollbackResult>;
+  planForAction(
+    actionId: string,
+    opts?: RollbackProjectionOptions,
+  ): Promise<Result<RollbackPlan, VeritrailError>>;
+  planForCorrelation(
+    correlationId: string,
+    opts?: RollbackProjectionOptions,
+  ): Promise<RollbackPlan>;
+  execute(
+    plan: RollbackPlan,
+    executor?: CompensationExecutor,
+    opts?: RollbackRecordOptions,
+  ): Promise<RollbackResult>;
 }
 
 function createRollbackModule(ctx: ModuleContext): RollbackModule;
 ```
+
+Passing `labels` to a plan read restricts it to records carrying exactly those
+labels, so planning another tenant's action returns `NOT_FOUND` and a
+correlation plan covers only the in-scope actions. Passing `labels` to `execute`
+stamps them onto each appended `action.rolled_back` fact. The server uses these
+options to enforce per-tenant API-key label scopes.
 
 ## Example
 

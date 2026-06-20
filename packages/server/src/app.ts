@@ -534,28 +534,37 @@ function registerRoutes(
   // ---- rollback ---------------------------------------------------------
   app.post(
     '/api/rollback/plan/action/:actionId',
-    unscopedReadRoute(rollbackRead),
+    readRoute(rollbackRead),
     async (request, reply) => {
       const id = String((request.params as Record<string, unknown>)['actionId']);
-      return replyResult(reply, await rollback.planForAction(id));
+      return replyResult(
+        reply,
+        await rollback.planForAction(id, rollbackOptions(request.principal)),
+      );
     },
   );
 
   app.get(
     '/api/rollback/plan/correlation/:correlationId',
-    unscopedReadRoute(rollbackRead),
+    readRoute(rollbackRead),
     async (request, reply) => {
       const id = String((request.params as Record<string, unknown>)['correlationId']);
-      return reply.send(await rollback.planForCorrelation(id));
+      return reply.send(await rollback.planForCorrelation(id, rollbackOptions(request.principal)));
     },
   );
 
-  app.post('/api/rollback/execute', unscopedWriteRoute(rollbackExecute), async (request, reply) => {
+  app.post('/api/rollback/execute', writeRoute(rollbackExecute), async (request, reply) => {
     const plan = (request.body as { plan?: unknown })?.plan;
     if (plan === null || typeof plan !== 'object') {
       return replyError(reply, validationError('plan is required'));
     }
-    return reply.send(await rollback.execute(plan as Parameters<typeof rollback.execute>[0]));
+    return reply.send(
+      await rollback.execute(
+        plan as Parameters<typeof rollback.execute>[0],
+        undefined,
+        rollbackOptions(request.principal),
+      ),
+    );
   });
 }
 
@@ -706,6 +715,13 @@ function vendorRiskOptions(
 }
 
 function forensicsOptions(
+  principal: ApiKeyPrincipal | undefined,
+): { labels?: Readonly<Record<string, string>> } | undefined {
+  const labelScope = principal?.labelScope;
+  return labelScope === undefined ? undefined : { labels: labelScope };
+}
+
+function rollbackOptions(
   principal: ApiKeyPrincipal | undefined,
 ): { labels?: Readonly<Record<string, string>> } | undefined {
   const labelScope = principal?.labelScope;
