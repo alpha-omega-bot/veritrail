@@ -45,15 +45,27 @@ interface IncidentReport {
 class ForensicsModule implements VeritrailModule {
   readonly info: { name: '@veritrail/forensics'; version: '0.1.0'; capability: 'forensics' };
   constructor(ctx: ModuleContext);
-  incident(correlationId: string): Promise<IncidentReport>;
+  incident(correlationId: string, opts?: ForensicsProjectionOptions): Promise<IncidentReport>;
   timeline(query: EventQuery): Promise<TimelineEntry[]>;
-  causeChain(causationId: string): Promise<LedgerRecord[]>;
+  causeChain(causationId: string, opts?: ForensicsProjectionOptions): Promise<LedgerRecord[]>;
+}
+
+interface ForensicsProjectionOptions {
+  /** Restrict the projection to records carrying these exact ledger labels. */
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 function createForensicsModule(ctx: ModuleContext): ForensicsModule;
 
 // Also exported: summarize(event: EventInput): string
 ```
+
+Passing `labels` restricts a projection to records carrying exactly those
+labels. `incident` then counts and timelines only the in-scope events of the
+correlation; `causeChain` walks the causal graph over in-scope records only, so
+a hop to an out-of-scope link truncates the chain at the tenant boundary rather
+than revealing cross-tenant causation. The server uses these options to enforce
+per-tenant API-key label scopes.
 
 ## Example
 

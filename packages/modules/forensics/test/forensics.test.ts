@@ -251,6 +251,81 @@ describe('ForensicsModule.causeChain', () => {
   });
 });
 
+describe('ForensicsModule tenant label scoping', () => {
+  it('scopes incident reports to the projection labels', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    const acme = { tenant: 'acme', project: 'alpha' };
+    const other = { tenant: 'other', project: 'alpha' };
+
+    await append(ledger, clock, {
+      type: 'action.executed',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      labels: acme,
+      payload: { actionId: 'act-1', outcome: 'success' },
+    });
+    await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-9',
+      correlationId: 'run-1',
+      labels: other,
+      payload: { actionId: 'act-2', error: 'boom' },
+    });
+
+    const module = createForensicsModule(ctx);
+    const scoped = await module.incident('run-1', { labels: acme });
+    expect(scoped.entries).toHaveLength(1);
+    expect(scoped.failures).toBe(0);
+    expect(scoped.actors).toEqual(['agent-1']);
+
+    // Without a scope the whole correlation is visible.
+    const all = await module.incident('run-1');
+    expect(all.entries).toHaveLength(2);
+    expect(all.failures).toBe(1);
+  });
+
+  it('truncates a cause chain at the tenant boundary', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    const acme = { tenant: 'acme', project: 'alpha' };
+    const other = { tenant: 'other', project: 'alpha' };
+
+    // A cross-tenant chain: other-tenant root -> acme middle -> acme tip.
+    const root = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-9',
+      labels: other,
+      payload: { text: 'root in another tenant' },
+    });
+    const middle = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-1',
+      labels: acme,
+      causationId: root.id,
+      payload: { text: 'acme middle' },
+    });
+    const tip = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-1',
+      labels: acme,
+      causationId: middle.id,
+      payload: { text: 'acme tip' },
+    });
+
+    const module = createForensicsModule(ctx);
+    // Scoped to acme: the walk stops when it reaches the out-of-scope root.
+    const scoped = await module.causeChain(tip.id, { labels: acme });
+    expect(scoped.map((r) => r.id)).toEqual([middle.id, tip.id]);
+
+    // A chain rooted at another tenant's record is invisible (fail-closed).
+    const crossRoot = await module.causeChain(root.id, { labels: acme });
+    expect(crossRoot).toEqual([]);
+
+    // Unscoped readers still see the full chain.
+    const all = await module.causeChain(tip.id);
+    expect(all.map((r) => r.id)).toEqual([root.id, middle.id, tip.id]);
+  });
+});
+
 describe('summarize', () => {
   it('summarizes denials with reason', () => {
     const s = summarize({

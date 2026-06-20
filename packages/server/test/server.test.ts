@@ -1167,6 +1167,157 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('enforces label scopes on forensics incident and cause-chain reads', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'forensics-admin-secret-0001',
+            roles: ['admin'],
+          },
+          {
+            id: 'tenant-forensics-reader',
+            actorId: 'tenant-operator',
+            secret: 'forensics-acme-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['forensics:read'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'operator',
+            actorId: 'operator-1',
+            secret: 'forensics-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['forensics:read'],
+          },
+        ],
+      },
+    });
+    try {
+      const adminHeaders = { authorization: 'Bearer forensics-admin-secret-0001', ...json };
+      const append = async (event: Record<string, unknown>): Promise<number> => {
+        const res = await scopedApp.inject({
+          method: 'POST',
+          url: '/api/events',
+          headers: adminHeaders,
+          payload: body(event),
+        });
+        expect(res.statusCode).toBe(201);
+        return (res.json() as { record: { seq: number } }).record.seq;
+      };
+      const recordId = async (seq: number): Promise<string> => {
+        const res = await scopedApp.inject({
+          method: 'GET',
+          url: `/api/audit/events/${seq}`,
+          headers: { authorization: 'Bearer forensics-admin-secret-0001' },
+        });
+        return (res.json() as { id: string }).id;
+      };
+
+      // A correlation that spans two tenants.
+      await append({
+        type: 'action.executed',
+        actorId: 'agent-acme',
+        correlationId: 'run-1',
+        labels: { tenant: 'acme', project: 'alpha' },
+        payload: { actionId: 'act-1', outcome: 'success' },
+      });
+      await append({
+        type: 'action.failed',
+        actorId: 'agent-other',
+        correlationId: 'run-1',
+        labels: { tenant: 'other', project: 'alpha' },
+        payload: { actionId: 'act-2', error: 'boom' },
+      });
+
+      const reader = { authorization: 'Bearer forensics-acme-reader-secret-0001' };
+
+      const scopedIncident = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/forensics/incident?correlationId=run-1',
+        headers: reader,
+      });
+      expect(scopedIncident.statusCode).toBe(200);
+      const report = scopedIncident.json() as {
+        entries: unknown[];
+        failures: number;
+        actors: string[];
+      };
+      expect(report.entries).toHaveLength(1);
+      expect(report.failures).toBe(0);
+      expect(report.actors).toEqual(['agent-acme']);
+
+      // Build a cross-tenant cause chain: other root -> acme middle -> acme tip.
+      const rootSeq = await append({
+        type: 'note',
+        actorId: 'agent-other',
+        labels: { tenant: 'other', project: 'alpha' },
+        payload: { text: 'root' },
+      });
+      const rootId = await recordId(rootSeq);
+      const middleSeq = await append({
+        type: 'note',
+        actorId: 'agent-acme',
+        causationId: rootId,
+        labels: { tenant: 'acme', project: 'alpha' },
+        payload: { text: 'middle' },
+      });
+      const middleId = await recordId(middleSeq);
+      const tipSeq = await append({
+        type: 'note',
+        actorId: 'agent-acme',
+        causationId: middleId,
+        labels: { tenant: 'acme', project: 'alpha' },
+        payload: { text: 'tip' },
+      });
+      const tipId = await recordId(tipSeq);
+
+      const scopedChain = await scopedApp.inject({
+        method: 'GET',
+        url: `/api/forensics/cause/${tipId}`,
+        headers: reader,
+      });
+      expect(scopedChain.statusCode).toBe(200);
+      expect((scopedChain.json() as Array<{ id: string }>).map((r) => r.id)).toEqual([
+        middleId,
+        tipId,
+      ]);
+
+      // A chain rooted in another tenant is invisible to the scoped reader.
+      const crossChain = await scopedApp.inject({
+        method: 'GET',
+        url: `/api/forensics/cause/${rootId}`,
+        headers: reader,
+      });
+      expect(crossChain.statusCode).toBe(200);
+      expect(crossChain.json()).toEqual([]);
+
+      // An unscoped operator still sees the whole correlation and chain.
+      const unscopedIncident = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/forensics/incident?correlationId=run-1',
+        headers: { authorization: 'Bearer forensics-reader-secret-0001' },
+      });
+      expect((unscopedIncident.json() as { entries: unknown[] }).entries).toHaveLength(2);
+
+      const unscopedChain = await scopedApp.inject({
+        method: 'GET',
+        url: `/api/forensics/cause/${tipId}`,
+        headers: { authorization: 'Bearer forensics-reader-secret-0001' },
+      });
+      expect((unscopedChain.json() as Array<{ id: string }>).map((r) => r.id)).toEqual([
+        rootId,
+        middleId,
+        tipId,
+      ]);
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('denies label-scoped principals on unpartitioned module projections', async () => {
     const scopedApp = await buildServer({
       logger: false,
@@ -1251,8 +1402,6 @@ describe('Veritrail HTTP server auth', () => {
         ['GET', '/api/audit/verify'],
         ['GET', '/api/audit/export'],
         ['POST', '/api/permissions/evaluate'],
-        ['GET', '/api/forensics/incident?correlationId=run-1'],
-        ['GET', '/api/forensics/cause/action-1'],
         ['POST', '/api/rollback/plan/action/action-1'],
         ['GET', '/api/rollback/plan/correlation/run-1'],
         ['POST', '/api/rollback/execute'],

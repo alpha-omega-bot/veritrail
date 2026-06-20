@@ -509,12 +509,12 @@ function registerRoutes(
   });
 
   // ---- forensics --------------------------------------------------------
-  app.get('/api/forensics/incident', unscopedReadRoute(forensicsRead), async (request, reply) => {
+  app.get('/api/forensics/incident', readRoute(forensicsRead), async (request, reply) => {
     const correlationId = asString((request.query as Record<string, unknown>)['correlationId']);
     if (correlationId === undefined) {
       return replyError(reply, validationError('correlationId is required'));
     }
-    return reply.send(await forensics.incident(correlationId));
+    return reply.send(await forensics.incident(correlationId, forensicsOptions(request.principal)));
   });
 
   app.get('/api/forensics/timeline', readRoute(forensicsRead), async (request, reply) => {
@@ -526,14 +526,10 @@ function registerRoutes(
     return reply.send(entries);
   });
 
-  app.get(
-    '/api/forensics/cause/:causationId',
-    unscopedReadRoute(forensicsRead),
-    async (request, reply) => {
-      const id = String((request.params as Record<string, unknown>)['causationId']);
-      return reply.send(await forensics.causeChain(id));
-    },
-  );
+  app.get('/api/forensics/cause/:causationId', readRoute(forensicsRead), async (request, reply) => {
+    const id = String((request.params as Record<string, unknown>)['causationId']);
+    return reply.send(await forensics.causeChain(id, forensicsOptions(request.principal)));
+  });
 
   // ---- rollback ---------------------------------------------------------
   app.post(
@@ -703,6 +699,13 @@ function evidenceOptions(
 }
 
 function vendorRiskOptions(
+  principal: ApiKeyPrincipal | undefined,
+): { labels?: Readonly<Record<string, string>> } | undefined {
+  const labelScope = principal?.labelScope;
+  return labelScope === undefined ? undefined : { labels: labelScope };
+}
+
+function forensicsOptions(
   principal: ApiKeyPrincipal | undefined,
 ): { labels?: Readonly<Record<string, string>> } | undefined {
   const labelScope = principal?.labelScope;
