@@ -45,7 +45,7 @@ export interface RollbackPlan {
 /** The result of attempting a single {@link RollbackStep}. */
 export interface RollbackOutcome {
   readonly actionId: string;
-  readonly status: 'rolled_back' | 'skipped';
+  readonly status: 'rolled_back' | 'already_rolled_back' | 'skipped';
   readonly detail: string;
 }
 
@@ -54,14 +54,27 @@ export interface RollbackResult {
   readonly outcomes: RollbackOutcome[];
 }
 
+/** Context passed to a {@link CompensationExecutor} for each step. */
+export interface CompensationContext {
+  /**
+   * A stable key for this action's compensation. An executor MUST treat repeated
+   * calls with the same key as the same operation (run the side effect at most
+   * once) — this is what makes {@link RollbackModule.execute} safe to retry after
+   * a crash between performing a side effect and recording it.
+   */
+  readonly idempotencyKey: string;
+}
+
 /**
  * Pluggable side-effect performer. Given a step, run the real inverse operation
  * (call an API, restore a snapshot, …) and report whether it succeeded. The
  * returned `compensationActionId` is recorded on the appended `action.rolled_back`
- * event so the compensation itself is auditable.
+ * event so the compensation itself is auditable. The `context.idempotencyKey`
+ * lets the executor dedupe a retried side effect.
  */
 export type CompensationExecutor = (
   step: RollbackStep,
+  context: CompensationContext,
 ) => Promise<{ ok: boolean; detail?: string; compensationActionId?: string }>;
 
 /** Default executor: a no-op that reports success (records intent only). */
@@ -187,31 +200,45 @@ export class RollbackModule {
   }
 
   /**
-   * Plan the reversal of every executed, reversible action in a correlation.
+   * Plan the reversal of every executed, reversible action whose **proposal**
+   * belongs to a correlation.
    *
-   * Steps are emitted in REVERSE chronological (descending `seq`) order so that
-   * effects are undone last-in-first-out — the safe order for dependent work.
+   * Membership is defined by the `action.proposed` events carrying the
+   * `correlationId` (the authoritative source of each reversal descriptor).
+   * Execution is then resolved **globally by `actionId`**, so an
+   * `action.executed` receipt that omits the `correlationId` still counts — this
+   * is the fix for receipts that lose their correlation. An action *proposed*
+   * under a different correlation is intentionally excluded: it belongs to that
+   * correlation's plan, not this one.
+   *
+   * Steps are emitted in REVERSE chronological (descending execution `seq`) order
+   * so that effects are undone last-in-first-out — the safe order for dependent
+   * work.
    */
   async planForCorrelation(
     correlationId: string,
     opts?: RollbackProjectionOptions,
   ): Promise<RollbackPlan> {
-    const records = await this.#ctx.ledger.query({
-      correlationId,
-      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
-    });
+    const labelFilter = opts?.labels !== undefined ? { labels: opts.labels } : {};
+    const proposalRecords = await this.#ctx.ledger.query({ correlationId, ...labelFilter });
 
     const proposedById = new Map<string, Action>();
-    const executedSeq = new Map<string, number>();
-    for (const record of records) {
+    for (const record of proposalRecords) {
       const proposed = proposedAction(record);
-      if (proposed !== undefined) {
-        proposedById.set(proposed.id, proposed);
-        continue;
-      }
-      if (record.event.type === 'action.executed') {
-        executedSeq.set(record.event.payload.actionId, record.seq);
-      }
+      if (proposed !== undefined) proposedById.set(proposed.id, proposed);
+    }
+
+    // Resolve executions globally: a receipt may carry a different (or no)
+    // correlationId than its proposal, so we must not restrict by correlation.
+    const executionRecords = await this.#ctx.ledger.query({
+      types: ['action.executed'],
+      ...labelFilter,
+    });
+    const executedSeq = new Map<string, number>();
+    for (const record of executionRecords) {
+      if (record.event.type !== 'action.executed') continue;
+      const { actionId } = record.event.payload;
+      if (proposedById.has(actionId)) executedSeq.set(actionId, record.seq);
     }
 
     const steps: Array<{ seq: number; step: RollbackStep }> = [];
@@ -219,8 +246,7 @@ export class RollbackModule {
     for (const [actionId, seq] of executedSeq) {
       const action = proposedById.get(actionId);
       if (action === undefined) continue;
-      const reversible = isReversible(action);
-      if (reversible) {
+      if (isReversible(action)) {
         steps.push({ seq, step: stepFromAction(action) });
       } else {
         unreversible.push(actionId);
@@ -232,11 +258,21 @@ export class RollbackModule {
   }
 
   /**
-   * Execute a plan. For each step with a strategy other than `none`, invoke the
-   * executor (default: a success no-op). On success, append an
-   * `action.rolled_back` event and record a `rolled_back` outcome; on executor
-   * failure, record a `skipped` outcome and append nothing. `none` strategies
-   * are skipped without invoking the executor.
+   * Execute a plan, idempotently. The compensation is the risky step: a real
+   * side effect may succeed and then the `action.rolled_back` append may fail,
+   * leaving the effect done but unrecorded. To make `execute` safe to retry:
+   *
+   * - Steps whose `action.rolled_back` fact is already on the ledger are skipped
+   *   (`already_rolled_back`), so re-running a partially-completed plan does not
+   *   re-compensate work that was recorded.
+   * - The executor receives an `idempotencyKey` (the `actionId`) so it can dedupe
+   *   the one in-flight side effect that ran but was not recorded before a crash.
+   *
+   * For each remaining step with a strategy other than `none`: invoke the
+   * executor (default: a success no-op); on success append `action.rolled_back`
+   * and report `rolled_back`; on executor failure (or a failed append) report
+   * `skipped` and append nothing. `none` strategies are skipped without invoking
+   * the executor.
    */
   async execute(
     plan: RollbackPlan,
@@ -244,6 +280,7 @@ export class RollbackModule {
     opts?: RollbackRecordOptions,
   ): Promise<RollbackResult> {
     const outcomes: RollbackOutcome[] = [];
+    const alreadyRolledBack = await this.#rolledBackActionIds(opts);
 
     for (const step of plan.steps) {
       if (step.strategy === 'none') {
@@ -251,7 +288,16 @@ export class RollbackModule {
         continue;
       }
 
-      const result = await executor(step);
+      if (alreadyRolledBack.has(step.actionId)) {
+        outcomes.push({
+          actionId: step.actionId,
+          status: 'already_rolled_back',
+          detail: 'compensation already recorded on the ledger',
+        });
+        continue;
+      }
+
+      const result = await executor(step, { idempotencyKey: step.actionId });
       if (!result.ok) {
         outcomes.push({
           actionId: step.actionId,
@@ -276,6 +322,9 @@ export class RollbackModule {
       });
 
       if (appended.ok === false) {
+        // The side effect ran but recording it failed. The outcome is reported
+        // as skipped; a retry will re-invoke the executor with the same
+        // idempotencyKey (so it can dedupe) and record the rollback then.
         outcomes.push({
           actionId: step.actionId,
           status: 'skipped',
@@ -284,6 +333,9 @@ export class RollbackModule {
         continue;
       }
 
+      // Guard against re-recording within this same call should a duplicate step
+      // appear in the plan.
+      alreadyRolledBack.add(step.actionId);
       outcomes.push({
         actionId: step.actionId,
         status: 'rolled_back',
@@ -292,6 +344,19 @@ export class RollbackModule {
     }
 
     return { outcomes };
+  }
+
+  /** Action ids that already have an `action.rolled_back` fact on the ledger. */
+  async #rolledBackActionIds(opts?: RollbackProjectionOptions): Promise<Set<string>> {
+    const records = await this.#ctx.ledger.query({
+      types: ['action.rolled_back'],
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+    });
+    const ids = new Set<string>();
+    for (const record of records) {
+      if (record.event.type === 'action.rolled_back') ids.add(record.event.payload.actionId);
+    }
+    return ids;
   }
 }
 

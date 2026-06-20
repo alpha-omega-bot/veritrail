@@ -84,13 +84,19 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### rollback
 
-- [ ] Saga/partial-failure semantics; idempotency keys; real executor adapters;
-      snapshot stores for the `restore` strategy.
-- [ ] `execute()` loses a real compensation if the `action.rolled_back` append
-      fails after a successful side effect — make it durable/retryable. (review: low)
-- [ ] `planForCorrelation` silently drops executed actions whose proposal is in
-      another correlation / whose executed receipt lacks the correlationId —
-      decide intended semantics and make it explicit. (review: 2× low)
+- [ ] Saga/partial-failure semantics; real executor adapters; snapshot stores for
+      the `restore` strategy. (idempotency keys done — see below)
+- [x] `execute()` loses a real compensation if the `action.rolled_back` append
+      fails after a successful side effect — now retry-safe: `execute` skips
+      steps already recorded as rolled back (`already_rolled_back`) and passes an
+      `idempotencyKey` to the executor so an in-gap side effect is deduped on
+      retry. (review: low)
+- [x] `planForCorrelation` silently drops executed actions whose proposal is in
+      another correlation / whose executed receipt lacks the correlationId — now
+      explicit: membership follows the `action.proposed` correlation, execution
+      is resolved globally by `actionId` (so a receipt missing the correlationId
+      still counts), and actions proposed under another correlation are excluded
+      by design. (review: 2× low)
 
 ### forensics
 
@@ -180,6 +186,22 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Started Milestone 2 with the two rollback correctness findings.
+  (1) `execute()` is now idempotent/retry-safe: it skips steps whose
+  `action.rolled_back` fact is already on the ledger (new outcome status
+  `already_rolled_back`) and passes an `idempotencyKey` (the `actionId`) to the
+  `CompensationExecutor`, so a crash between performing a side effect and
+  recording it is recoverable — a retry re-runs the executor (deduped downstream
+  by key) and records the rollback. (2) `planForCorrelation` no longer drops
+  executed actions: membership follows the `action.proposed` correlation,
+  execution is resolved globally by `actionId` (a receipt missing the
+  correlationId still counts), and actions proposed under another correlation are
+  excluded by design. Widened `CompensationExecutor` to `(step, context)` —
+  backward compatible. Added retry-safety, idempotency-key, and plan-resolution
+  tests. **Next:** rollback GA depth (saga/partial-failure modes, real executor
+  adapters, snapshot stores for `restore`), then bring rollback fully to GA
+  status and move to forensics.
 
 - **2026-06-20** — Completed the last P1 backpressure item: append batching
   (ADR-0006). Added `Ledger.appendMany(inputs[])` — validates/redacts each input,

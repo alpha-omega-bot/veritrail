@@ -2,8 +2,11 @@ import {
   FixedClock,
   SequentialIdGenerator,
   createInMemoryLedger,
+  err,
   noopLogger,
+  storageError,
   type Action,
+  type Ledger,
   type ModuleContext,
 } from '@veritrail/core';
 import { describe, expect, it } from 'vitest';
@@ -365,5 +368,117 @@ describe('tenant label scoping', () => {
     // The compensating fact is visible to the same tenant scope.
     const scopedView = await ctx.ledger.query({ types: ['action.rolled_back'], labels: acme });
     expect(scopedView).toHaveLength(1);
+  });
+});
+
+describe('execute idempotency (finding 1)', () => {
+  it('passes the actionId as an idempotency key to the executor', async () => {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    await propose(ctx, reversibleAction('act-1'));
+    await executeAction(ctx, 'act-1');
+    const plan = await mod.planForAction('act-1');
+    if (!plan.ok) throw new Error('expected plan');
+
+    let seenKey: string | undefined;
+    const executor: CompensationExecutor = async (_step, context) => {
+      seenKey = context.idempotencyKey;
+      return { ok: true };
+    };
+    await mod.execute(plan.value, executor);
+    expect(seenKey).toBe('act-1');
+  });
+
+  it('skips a step already recorded as rolled back (re-entrant retry)', async () => {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    await propose(ctx, reversibleAction('act-1'));
+    await executeAction(ctx, 'act-1');
+    const plan = await mod.planForAction('act-1');
+    if (!plan.ok) throw new Error('expected plan');
+
+    const first = await mod.execute(plan.value);
+    expect(first.outcomes[0]?.status).toBe('rolled_back');
+
+    // Re-running the same plan must not re-compensate already-recorded work.
+    let invocations = 0;
+    const executor: CompensationExecutor = async () => {
+      invocations += 1;
+      return { ok: true };
+    };
+    const second = await mod.execute(plan.value, executor);
+    expect(second.outcomes[0]?.status).toBe('already_rolled_back');
+    expect(invocations).toBe(0);
+    expect(await ctx.ledger.query({ types: ['action.rolled_back'] })).toHaveLength(1);
+  });
+
+  it('is safe to retry when recording the rollback fails after the side effect', async () => {
+    const ctx = makeContext();
+    await propose(ctx, reversibleAction('act-1'));
+    await executeAction(ctx, 'act-1');
+
+    // Simulate a crash between performing the side effect and recording it: the
+    // first action.rolled_back append fails, later ones succeed.
+    let failRolledBackOnce = true;
+    const flakyLedger = {
+      append: async (input: unknown) => {
+        if (failRolledBackOnce && (input as { type?: string }).type === 'action.rolled_back') {
+          failRolledBackOnce = false;
+          return err(storageError('simulated crash before record'));
+        }
+        return ctx.ledger.append(input);
+      },
+      query: (q: Parameters<Ledger['query']>[0]) => ctx.ledger.query(q),
+      readAll: () => ctx.ledger.readAll(),
+    } as unknown as Ledger;
+
+    const mod = createRollbackModule({ ...ctx, ledger: flakyLedger });
+    const plan = await mod.planForAction('act-1');
+    if (!plan.ok) throw new Error('expected plan');
+
+    let sideEffects = 0;
+    const executor: CompensationExecutor = async () => {
+      sideEffects += 1;
+      return { ok: true };
+    };
+
+    // First attempt: side effect runs, recording fails → reported skipped, no fact.
+    const first = await mod.execute(plan.value, executor);
+    expect(first.outcomes[0]?.status).toBe('skipped');
+    expect(sideEffects).toBe(1);
+    expect(await ctx.ledger.query({ types: ['action.rolled_back'] })).toHaveLength(0);
+
+    // Retry: append now succeeds; the executor re-runs (deduped downstream via the
+    // idempotency key) and the rollback is recorded this time.
+    const second = await mod.execute(plan.value, executor);
+    expect(second.outcomes[0]?.status).toBe('rolled_back');
+    expect(sideEffects).toBe(2);
+    expect(await ctx.ledger.query({ types: ['action.rolled_back'] })).toHaveLength(1);
+  });
+});
+
+describe('planForCorrelation execution resolution (finding 2)', () => {
+  it('plans an executed action whose receipt omits the correlationId', async () => {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    await propose(ctx, reversibleAction('a'), 'run-1');
+    await executeAction(ctx, 'a'); // executed receipt carries NO correlationId
+
+    const plan = await mod.planForCorrelation('run-1');
+    expect(plan.steps.map((s) => s.actionId)).toEqual(['a']);
+  });
+
+  it('excludes an action proposed under a different correlation', async () => {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    await propose(ctx, reversibleAction('a'), 'run-1');
+    await executeAction(ctx, 'a', 'run-1');
+    // Proposed under run-2 but its execution receipt is tagged run-1.
+    await propose(ctx, reversibleAction('b'), 'run-2');
+    await executeAction(ctx, 'b', 'run-1');
+
+    // Membership follows the proposal: run-1's plan is just 'a'; 'b' belongs to run-2.
+    expect((await mod.planForCorrelation('run-1')).steps.map((s) => s.actionId)).toEqual(['a']);
+    expect((await mod.planForCorrelation('run-2')).steps.map((s) => s.actionId)).toEqual(['b']);
   });
 });
