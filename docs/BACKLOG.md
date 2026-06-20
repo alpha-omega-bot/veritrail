@@ -57,10 +57,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       policy/budget changes, Decision Memory writes/read projections, Evidence
       writes/read projections, Vendor Risk writes/read projections, Forensics
       incident/cause-chain read projections, Rollback plan reads + compensating
-      writes, and fail-closed scoped access for unpartitioned module projections
-      are implemented. Remaining work: tenant-filtered projection semantics for
-      the remaining module (permissions) and broader policy composition.
-      (threat: S1)
+      writes, tenant-scoped Permissions policies (per ADR-0004), and fail-closed
+      scoped access for unpartitioned module projections are implemented. Every
+      module projection now has tenant semantics. Remaining work: broader policy
+      composition (folded into the M4 policy-as-code item — richer language,
+      simulation, versioned on the ledger). (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -176,8 +177,22 @@ tests) — they are done:
 
 ## Session log
 
-- **2026-06-20** — Continued P1 server auth projection-tenancy semantics with
-  Rollback. Added `RollbackProjectionOptions` / `RollbackRecordOptions` to the
+- **2026-06-20** — Completed P1 server-auth projection tenancy with Permissions
+  (ADR-0004). Added an optional `tenant` to the core `PolicySchema`: a policy
+  with no tenant is global, one with tenant labels applies only to in-scope
+  principals. `listPolicies`/`evaluate`/`enforce` take an optional `scope`
+  (global + in-scope candidates; deny-by-default preserved), and `enforce` stamps
+  the principal's labels onto the `policy.evaluated`/`action.authorized`/
+  `action.denied` facts. Server permissions routes are now scoped: a label-scoped
+  admin may only create/remove policies in its own scope (the policy's `tenant`
+  is forced to the admin's scope; a body naming another tenant is rejected — the
+  footgun fix), and only an unscoped admin can write global policies. Added the
+  ADR, core schema + module + HTTP scoping tests, and updated the stale
+  "denies unpartitioned" test (permissions routes are now partitioned). Every
+  module projection now has tenant semantics; broader policy composition is
+  folded into the M4 policy-as-code item. **Next:** remaining mechanical P1 items
+  — PII field encryption + retention/erasure, append batching — then Milestone 2
+  scaffold-module GA work.
   module: `planForAction` and `planForCorrelation` filter to in-scope records
   (planning another tenant's action returns NOT_FOUND — fail-closed), and
   `execute` stamps the principal's labels onto appended `action.rolled_back`

@@ -45,6 +45,12 @@ export const PolicySchema = z
     description: z.string().default(''),
     effect: PolicyEffectSchema,
     match: PolicyMatchSchema.default({}),
+    /**
+     * Tenant scope. A policy with no `tenant` is GLOBAL and applies to every
+     * principal. A policy with `tenant` labels applies only to principals whose
+     * label scope contains every one of those labels. See ADR-0004.
+     */
+    tenant: LabelsSchema.optional(),
     /** Higher priority wins ties; equal priority resolves deny > require_approval > allow. */
     priority: z.number().int().default(0),
     enabled: z.boolean().default(true),

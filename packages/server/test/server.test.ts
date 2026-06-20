@@ -1466,6 +1466,147 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('scopes permission policies by tenant and confines scoped admins to their scope', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'perm-admin-secret-0001',
+            roles: ['admin'],
+          },
+          {
+            id: 'tenant-admin-acme',
+            actorId: 'tenant-admin',
+            secret: 'perm-acme-admin-secret-0001',
+            roles: ['admin'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-acme-agent',
+            actorId: 'acme-agent',
+            secret: 'perm-acme-ingest-secret-0001',
+            roles: ['ingest'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-other-agent',
+            actorId: 'other-agent',
+            secret: 'perm-other-ingest-secret-0001',
+            roles: ['ingest'],
+            labelScope: { tenant: 'other', project: 'alpha' },
+          },
+          {
+            id: 'tenant-acme-reader',
+            actorId: 'acme-reader',
+            secret: 'perm-acme-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['permissions:read'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+        ],
+      },
+    });
+    try {
+      const globalAdmin = { authorization: 'Bearer perm-admin-secret-0001', ...json };
+      const acmeAdmin = { authorization: 'Bearer perm-acme-admin-secret-0001', ...json };
+
+      // A global deny applies to every tenant (only an unscoped admin can write it).
+      const globalDeny = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers: globalAdmin,
+        payload: body({
+          name: 'global deny email',
+          effect: 'deny',
+          match: { actionTypes: ['email.*'] },
+          priority: 1,
+        }),
+      });
+      expect(globalDeny.statusCode).toBe(200);
+
+      // A scoped admin creates a policy; the server forces its tenant.
+      const acmeAllow = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers: acmeAdmin,
+        payload: body({
+          name: 'acme allow tools',
+          effect: 'allow',
+          match: { actionTypes: ['tool.*'] },
+        }),
+      });
+      expect(acmeAllow.statusCode).toBe(200);
+      expect((acmeAllow.json() as { tenant?: Record<string, string> }).tenant).toEqual({
+        tenant: 'acme',
+        project: 'alpha',
+      });
+
+      // A scoped admin naming another tenant is rejected (the footgun fix).
+      const crossTenant = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/policies',
+        headers: acmeAdmin,
+        payload: body({
+          name: 'sneaky cross-tenant',
+          effect: 'allow',
+          match: {},
+          tenant: { tenant: 'other', project: 'alpha' },
+        }),
+      });
+      expect(crossTenant.statusCode).toBe(400);
+      expect(crossTenant.json()).toMatchObject({
+        error: { code: 'VALIDATION', message: 'policy tenant is outside API key scope' },
+      });
+
+      // A scoped admin sees only global + its own tenant policies.
+      const scopedList = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/permissions/policies',
+        headers: { authorization: 'Bearer perm-acme-reader-secret-0001' },
+      });
+      expect(scopedList.statusCode).toBe(200);
+      expect((scopedList.json() as Array<{ name: string }>).map((p) => p.name).sort()).toEqual([
+        'acme allow tools',
+        'global deny email',
+      ]);
+
+      // The acme tenant's tool action is allowed by its tenant policy…
+      const acmeEnforce = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/enforce',
+        headers: { authorization: 'Bearer perm-acme-ingest-secret-0001', ...json },
+        payload: body({ action: { id: 'act-acme', actorId: 'acme-agent', type: 'tool.search' } }),
+      });
+      expect(acmeEnforce.statusCode).toBe(200);
+      expect((acmeEnforce.json() as { effect: string }).effect).toBe('allow');
+
+      // …but the other tenant has no matching policy, so deny-by-default holds.
+      const otherEnforce = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/permissions/enforce',
+        headers: { authorization: 'Bearer perm-other-ingest-secret-0001', ...json },
+        payload: body({ action: { id: 'act-other', actorId: 'other-agent', type: 'tool.search' } }),
+      });
+      expect(otherEnforce.statusCode).toBe(403);
+      expect(otherEnforce.json()).toMatchObject({ error: { code: 'POLICY_DENIED' } });
+
+      // The enforcement facts are stamped with the acting tenant's labels.
+      const acmeFacts = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/audit/events?type=action.authorized',
+        headers: { authorization: 'Bearer perm-admin-secret-0001' },
+      });
+      const facts = acmeFacts.json() as Array<{ event: { labels: Record<string, string> } }>;
+      expect(facts).toHaveLength(1);
+      expect(facts[0]?.event.labels).toEqual({ tenant: 'acme', project: 'alpha' });
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('denies label-scoped principals on unpartitioned module projections', async () => {
     const scopedApp = await buildServer({
       logger: false,
@@ -1545,11 +1686,9 @@ describe('Veritrail HTTP server auth', () => {
       expect(rawRead.json()).toHaveLength(1);
 
       const deniedReadRoutes = [
-        ['GET', '/api/permissions/policies'],
         ['GET', '/api/audit/summary'],
         ['GET', '/api/audit/verify'],
         ['GET', '/api/audit/export'],
-        ['POST', '/api/permissions/evaluate'],
       ] as const;
 
       for (const [method, url] of deniedReadRoutes) {
@@ -1557,58 +1696,9 @@ describe('Veritrail HTTP server auth', () => {
           method,
           url,
           headers: scopedOperatorHeaders,
-          ...(method === 'POST'
-            ? {
-                payload: body({
-                  action: { id: 'action-1', actorId: 'tenant-agent', type: 'tool.search' },
-                  content: 'payload',
-                  plan: { steps: [], unreversible: [] },
-                }),
-              }
-            : {}),
         });
         expect(res.statusCode, `${method} ${url}`).toBe(400);
         expect(res.json(), `${method} ${url}`).toMatchObject({
-          error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
-        });
-      }
-
-      const deniedIngestRoutes = [
-        [
-          '/api/permissions/enforce',
-          {
-            action: { id: 'action-1', actorId: 'tenant-agent', type: 'tool.search' },
-          },
-        ],
-      ] as const;
-
-      for (const [url, payload] of deniedIngestRoutes) {
-        const res = await scopedApp.inject({
-          method: 'POST',
-          url,
-          headers: scopedIngestHeaders,
-          payload: body(payload),
-        });
-        expect(res.statusCode, url).toBe(400);
-        expect(res.json(), url).toMatchObject({
-          error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
-        });
-      }
-
-      for (const [url, payload] of [
-        [
-          '/api/permissions/policies',
-          { name: 'tenant policy', effect: 'allow', match: { actionTypes: ['tool.*'] } },
-        ],
-      ] as const) {
-        const res = await scopedApp.inject({
-          method: 'POST',
-          url,
-          headers: scopedAdminHeaders,
-          payload: body(payload),
-        });
-        expect(res.statusCode, url).toBe(400);
-        expect(res.json(), url).toMatchObject({
           error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
         });
       }
@@ -1625,16 +1715,6 @@ describe('Veritrail HTTP server auth', () => {
       });
       expect(budgetMutation.statusCode).toBe(400);
       expect(budgetMutation.json()).toMatchObject({
-        error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
-      });
-
-      const deletePolicy = await scopedApp.inject({
-        method: 'DELETE',
-        url: '/api/permissions/policies/pol-1',
-        headers: { authorization: 'Bearer tenant-module-admin-secret-0001' },
-      });
-      expect(deletePolicy.statusCode).toBe(400);
-      expect(deletePolicy.json()).toMatchObject({
         error: { code: 'VALIDATION', message: 'route requires an unscoped API key' },
       });
     } finally {
