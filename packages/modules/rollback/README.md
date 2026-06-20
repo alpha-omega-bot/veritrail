@@ -20,15 +20,23 @@ appending an `action.rolled_back` event.
   executed, then produces a one-step plan. Non-reversible actions (or strategy
   `none`), or actions that were never executed, land in `unreversible`. Returns
   a `NOT_FOUND` error if the action was never proposed.
-- **`planForCorrelation(correlationId)`** — collects every executed, reversible
-  action in a correlation and emits steps in **reverse chronological order**
-  (highest `seq` first), so dependent effects unwind last-in-first-out.
-- **`execute(plan, executor?)`** — runs each step. A pluggable
-  `CompensationExecutor` performs the real side effect (cancel an order, restore
-  a snapshot, …); the default executor is a success no-op that records intent
-  only. On success an `action.rolled_back` event is appended (carrying the
-  executor's `compensationActionId` when provided); on executor failure the step
-  is skipped and nothing is written; `none` strategies are skipped outright.
+- **`planForCorrelation(correlationId)`** — collects every reversible action
+  whose **proposal** belongs to the correlation, resolving execution **globally
+  by `actionId`** (so an `action.executed` receipt that omits the
+  `correlationId` still counts). Steps are emitted in **reverse chronological
+  order** (highest execution `seq` first), so dependent effects unwind
+  last-in-first-out. An action proposed under a different correlation is
+  excluded — it belongs to that correlation's plan.
+- **`execute(plan, executor?)`** — runs each step **idempotently**. Steps whose
+  `action.rolled_back` fact is already on the ledger are skipped
+  (`already_rolled_back`), and the executor receives an `idempotencyKey` (the
+  `actionId`), so a plan can be safely retried after a crash between performing a
+  side effect and recording it. A pluggable `CompensationExecutor` performs the
+  real side effect (cancel an order, restore a snapshot, …); the default executor
+  is a success no-op that records intent only. On success an `action.rolled_back`
+  event is appended (carrying the executor's `compensationActionId` when
+  provided); on executor failure — or a failed append — the step is `skipped` and
+  no fact is written; `none` strategies are skipped outright.
 
 ## Public API
 
@@ -45,15 +53,20 @@ interface RollbackPlan {
 }
 interface RollbackOutcome {
   actionId: string;
-  status: 'rolled_back' | 'skipped';
+  status: 'rolled_back' | 'already_rolled_back' | 'skipped';
   detail: string;
 }
 interface RollbackResult {
   outcomes: RollbackOutcome[];
 }
 
+interface CompensationContext {
+  /** Stable per-action key; an executor must run the side effect at most once per key. */
+  idempotencyKey: string;
+}
 type CompensationExecutor = (
   step: RollbackStep,
+  context: CompensationContext,
 ) => Promise<{ ok: boolean; detail?: string; compensationActionId?: string }>;
 
 interface RollbackProjectionOptions {
@@ -151,8 +164,6 @@ if (plan.ok) {
 
 ## Phase 1 TODO
 
-- **Idempotency keys** — dedupe re-runs so a step never compensates twice;
-  detect an existing `action.rolled_back` for an action and skip it.
 - **Saga / partial-failure semantics** — stop-on-first-failure vs.
   best-effort modes, retries with backoff, and a recorded plan-execution
   summary for partially-applied plans.
