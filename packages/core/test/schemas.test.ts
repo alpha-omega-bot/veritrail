@@ -43,6 +43,19 @@ describe('PolicySchema', () => {
     expect(policy.priority).toBe(0);
     expect(policy.match).toEqual({});
   });
+
+  it('is global (no tenant) by default and accepts a tenant scope', () => {
+    const global = PolicySchema.parse({ id: 'pol_1', name: 'global', effect: 'deny' });
+    expect(global.tenant).toBeUndefined();
+
+    const scoped = PolicySchema.parse({
+      id: 'pol_2',
+      name: 'tenant',
+      effect: 'allow',
+      tenant: { tenant: 'acme', project: 'alpha' },
+    });
+    expect(scoped.tenant).toEqual({ tenant: 'acme', project: 'alpha' });
+  });
 });
 
 describe('BudgetSchema', () => {

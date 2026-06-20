@@ -38,6 +38,21 @@ export interface PolicyDecision {
   readonly reason: string;
 }
 
+/** A set of exact tenant labels constraining which policies apply. */
+export type PolicyScope = Readonly<Record<string, string>>;
+
+/**
+ * Is a policy in scope for a principal with the given label scope? A global
+ * policy (no `tenant`) always applies; an unscoped principal (no `scope`) sees
+ * every policy; otherwise the policy's `tenant` labels must all be present in
+ * the principal's scope. See ADR-0004.
+ */
+function policyInScope(policy: Policy, scope: PolicyScope | undefined): boolean {
+  if (policy.tenant === undefined) return true;
+  if (scope === undefined) return true;
+  return Object.entries(policy.tenant).every(([key, value]) => scope[key] === value);
+}
+
 /** Construction-time options for {@link PermissionsModule}. */
 export interface PermissionsConfig {
   /** Effect applied when no enabled policy matches. SAFE DEFAULT: `deny`. */
@@ -118,9 +133,15 @@ export class PermissionsModule implements VeritrailModule {
     return this.#policies.delete(id);
   }
 
-  /** All registered policies, ordered by priority desc (then effect rank). */
-  listPolicies(): Policy[] {
-    return [...this.#policies.values()].sort(comparePolicies);
+  /**
+   * Registered policies, ordered by priority desc (then effect rank). With a
+   * `scope`, only global policies and policies in that tenant scope are
+   * returned; without one, every policy is returned. See ADR-0004.
+   */
+  listPolicies(scope?: PolicyScope): Policy[] {
+    return [...this.#policies.values()]
+      .filter((p) => policyInScope(p, scope))
+      .sort(comparePolicies);
   }
 
   /**
@@ -128,10 +149,14 @@ export class PermissionsModule implements VeritrailModule {
    * appends nothing. Among enabled policies whose `match` applies, the highest
    * priority wins (ties resolve deny > require_approval > allow). When nothing
    * matches, the configured default effect is used.
+   *
+   * A `scope` restricts evaluation to global + in-scope policies, so a tenant is
+   * judged only by rules that govern it; deny-by-default still applies when no
+   * in-scope policy matches.
    */
-  evaluate(action: Action, opts?: { actor?: Actor }): PolicyDecision {
+  evaluate(action: Action, opts?: { actor?: Actor; scope?: PolicyScope }): PolicyDecision {
     const actor = opts?.actor;
-    const candidates = this.listPolicies().filter(
+    const candidates = this.listPolicies(opts?.scope).filter(
       (p) => p.enabled && matchesAction(p.match, action, actor),
     );
 
@@ -160,15 +185,18 @@ export class PermissionsModule implements VeritrailModule {
    */
   async enforce(
     action: Action,
-    opts?: { actor?: Actor },
+    opts?: { actor?: Actor; scope?: PolicyScope; labels?: Readonly<Record<string, string>> },
   ): Promise<Result<PolicyDecision, VeritrailError>> {
     const decision = this.evaluate(action, opts);
+    const labels = opts?.labels;
+    const labelEnvelope = labels !== undefined ? { labels } : {};
 
     const evalRes = await this.#ctx.ledger.append({
       type: 'policy.evaluated',
       actorId: action.actorId,
       correlationId: action.id,
       causationId: action.id,
+      ...labelEnvelope,
       payload: {
         actionId: action.id,
         effect: decision.effect,
@@ -187,6 +215,7 @@ export class PermissionsModule implements VeritrailModule {
           actorId: action.actorId,
           correlationId: action.id,
           causationId: action.id,
+          ...labelEnvelope,
           payload: {
             actionId: action.id,
             ...(decision.matchedPolicyId !== undefined
@@ -203,6 +232,7 @@ export class PermissionsModule implements VeritrailModule {
           actorId: action.actorId,
           correlationId: action.id,
           causationId: action.id,
+          ...labelEnvelope,
           payload: {
             actionId: action.id,
             reason: decision.reason,

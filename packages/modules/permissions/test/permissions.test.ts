@@ -352,3 +352,84 @@ describe('enforce — ledger effects', () => {
     expect(report.ok).toBe(true);
   });
 });
+
+describe('tenant scoping', () => {
+  const acme = { tenant: 'acme', project: 'alpha' };
+  const other = { tenant: 'other', project: 'alpha' };
+
+  function seeded(): PermissionsModule {
+    const { ctx } = makeCtx();
+    const mod = createPermissionsModule(ctx);
+    // Global deny for email; acme-only allow for tools.
+    mod.addPolicy({
+      id: 'pol_global',
+      name: 'global deny email',
+      effect: 'deny',
+      match: { actionTypes: ['email.*'] },
+    });
+    mod.addPolicy({
+      id: 'pol_acme',
+      name: 'acme allow tools',
+      effect: 'allow',
+      match: { actionTypes: ['tool.*'] },
+      tenant: acme,
+    });
+    return mod;
+  }
+
+  it('lists global plus in-scope policies for a scoped principal', () => {
+    const mod = seeded();
+    expect(
+      mod
+        .listPolicies(acme)
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual(['pol_acme', 'pol_global']);
+    expect(mod.listPolicies(other).map((p) => p.id)).toEqual(['pol_global']);
+    // Unscoped sees everything.
+    expect(
+      mod
+        .listPolicies()
+        .map((p) => p.id)
+        .sort(),
+    ).toEqual(['pol_acme', 'pol_global']);
+  });
+
+  it('applies a tenant policy only within its scope', () => {
+    const mod = seeded();
+    const toolAction = action({ id: 'a', type: 'tool.search' });
+    expect(mod.evaluate(toolAction, { scope: acme }).effect).toBe('allow');
+    // Other tenant: the acme allow is filtered out, nothing matches → deny-default.
+    expect(mod.evaluate(toolAction, { scope: other }).effect).toBe('deny');
+  });
+
+  it('always applies a global policy regardless of scope', () => {
+    const mod = seeded();
+    const emailAction = action({ id: 'a', type: 'email.send' });
+    expect(mod.evaluate(emailAction, { scope: acme }).effect).toBe('deny');
+    expect(mod.evaluate(emailAction, { scope: other }).effect).toBe('deny');
+    expect(mod.evaluate(emailAction).effect).toBe('deny');
+  });
+
+  it('stamps the configured labels onto enforcement facts', async () => {
+    const { ctx, ledger } = makeCtx();
+    const mod = createPermissionsModule(ctx);
+    mod.addPolicy({
+      id: 'pol_acme',
+      name: 'acme allow',
+      effect: 'allow',
+      match: { actionTypes: ['tool.*'] },
+      tenant: acme,
+    });
+    const res = await mod.enforce(action({ id: 'a', type: 'tool.search' }), {
+      scope: acme,
+      labels: acme,
+    });
+    expect(isOk(res)).toBe(true);
+
+    const authorized = await ledger.query({ types: ['action.authorized'] });
+    expect(authorized[0]?.event.labels).toEqual(acme);
+    const evaluated = await ledger.query({ types: ['policy.evaluated'] });
+    expect(evaluated[0]?.event.labels).toEqual(acme);
+  });
+});

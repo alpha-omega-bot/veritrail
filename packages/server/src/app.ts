@@ -287,15 +287,15 @@ function registerRoutes(
   });
 
   // ---- permissions ------------------------------------------------------
-  app.get(
-    '/api/permissions/policies',
-    unscopedReadRoute(permissionsRead),
-    async (_request, reply) => reply.send(permissions.listPolicies()),
+  app.get('/api/permissions/policies', readRoute(permissionsRead), async (request, reply) =>
+    reply.send(permissions.listPolicies(request.principal?.labelScope)),
   );
 
-  app.post('/api/permissions/policies', unscopedWriteRoute(['admin']), async (request, reply) => {
+  app.post('/api/permissions/policies', writeRoute(['admin']), async (request, reply) => {
     const candidate = withGeneratedId(request.body, 'pol', platform);
-    const parsed = PolicySchema.safeParse(candidate);
+    const scoped = policyCandidateForPrincipal(candidate, request.principal);
+    if (!scoped.ok) return replyError(reply, scoped.error);
+    const parsed = PolicySchema.safeParse(scoped.value);
     if (!parsed.success) return replyError(reply, validationError('invalid policy'));
     const signature = verifyAdminActionRequest(authenticator, platform, request);
     if (!signature.ok) return replyError(reply, signature.error);
@@ -314,43 +314,50 @@ function registerRoutes(
     return replyResult(reply, result);
   });
 
-  app.delete(
-    '/api/permissions/policies/:id',
-    unscopedWriteRoute(['admin']),
-    async (request, reply) => {
-      const id = String((request.params as Record<string, unknown>)['id']);
-      const existing = permissions.listPolicies().find((policy) => policy.id === id);
-      if (!existing) return reply.code(404).send({ removed: false });
-      const signature = verifyAdminActionRequest(authenticator, platform, request);
-      if (!signature.ok) return replyError(reply, signature.error);
-      const audit = await recordAdminAction(platform, request.principal, {
-        action: 'policy.removed',
-        targetType: 'policy',
-        targetId: id,
-        ...(signature.value !== undefined ? { signature: signature.value } : {}),
-      });
-      if (!audit.ok) {
-        return replyError(reply, audit.error);
-      }
-      permissions.removePolicy(id);
-      return reply.send({ removed: true });
-    },
-  );
+  app.delete('/api/permissions/policies/:id', writeRoute(['admin']), async (request, reply) => {
+    const id = String((request.params as Record<string, unknown>)['id']);
+    const existing = permissions
+      .listPolicies(request.principal?.labelScope)
+      .find((policy) => policy.id === id);
+    if (!existing) return reply.code(404).send({ removed: false });
+    const signature = verifyAdminActionRequest(authenticator, platform, request);
+    if (!signature.ok) return replyError(reply, signature.error);
+    const audit = await recordAdminAction(platform, request.principal, {
+      action: 'policy.removed',
+      targetType: 'policy',
+      targetId: id,
+      ...(signature.value !== undefined ? { signature: signature.value } : {}),
+    });
+    if (!audit.ok) {
+      return replyError(reply, audit.error);
+    }
+    permissions.removePolicy(id);
+    return reply.send({ removed: true });
+  });
 
-  app.post(
-    '/api/permissions/evaluate',
-    unscopedReadRoute(permissionsRead),
-    async (request, reply) => {
-      const parsed = parseActionWithActor(request.body);
-      if (!parsed.ok) return replyError(reply, parsed.error);
-      return reply.send(permissions.evaluate(parsed.action, parsed.opts));
-    },
-  );
-
-  app.post('/api/permissions/enforce', unscopedWriteRoute(['ingest']), async (request, reply) => {
+  app.post('/api/permissions/evaluate', readRoute(permissionsRead), async (request, reply) => {
     const parsed = parseActionWithActor(request.body);
     if (!parsed.ok) return replyError(reply, parsed.error);
-    return replyResult(reply, await permissions.enforce(parsed.action, parsed.opts));
+    const scope = request.principal?.labelScope;
+    return reply.send(
+      permissions.evaluate(parsed.action, {
+        ...parsed.opts,
+        ...(scope !== undefined ? { scope } : {}),
+      }),
+    );
+  });
+
+  app.post('/api/permissions/enforce', writeRoute(['ingest']), async (request, reply) => {
+    const parsed = parseActionWithActor(request.body);
+    if (!parsed.ok) return replyError(reply, parsed.error);
+    const scope = request.principal?.labelScope;
+    return replyResult(
+      reply,
+      await permissions.enforce(parsed.action, {
+        ...parsed.opts,
+        ...(scope !== undefined ? { scope, labels: scope } : {}),
+      }),
+    );
   });
 
   // ---- spend guard ------------------------------------------------------
@@ -726,6 +733,42 @@ function rollbackOptions(
 ): { labels?: Readonly<Record<string, string>> } | undefined {
   const labelScope = principal?.labelScope;
   return labelScope === undefined ? undefined : { labels: labelScope };
+}
+
+/**
+ * Confine a policy candidate to the principal's tenant scope (ADR-0004). An
+ * unscoped admin may write any policy (global or tenant-specific). A
+ * label-scoped admin may only write policies within its own scope: the policy's
+ * `tenant` is forced to the principal's label scope, and a body that names a
+ * different tenant is rejected so a tenant admin cannot author a rule that
+ * governs another tenant.
+ */
+function policyCandidateForPrincipal(
+  candidate: unknown,
+  principal: ApiKeyPrincipal | undefined,
+): QueryParseResult<unknown> {
+  const labelScope = principal?.labelScope;
+  if (labelScope === undefined) return { ok: true, value: candidate };
+  if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return { ok: true, value: candidate };
+  }
+  const obj = candidate as Record<string, unknown>;
+  const bodyTenant = obj['tenant'];
+  if (bodyTenant !== undefined) {
+    const matches =
+      bodyTenant !== null &&
+      typeof bodyTenant === 'object' &&
+      !Array.isArray(bodyTenant) &&
+      Object.keys(bodyTenant as Record<string, unknown>).length ===
+        Object.keys(labelScope).length &&
+      Object.entries(labelScope).every(
+        ([key, value]) => (bodyTenant as Record<string, unknown>)[key] === value,
+      );
+    if (!matches) {
+      return { ok: false, error: validationError('policy tenant is outside API key scope') };
+    }
+  }
+  return { ok: true, value: { ...obj, tenant: { ...labelScope } } };
 }
 
 function zodIssues(error: ZodError): JsonValue {

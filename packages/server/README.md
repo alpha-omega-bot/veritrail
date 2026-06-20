@@ -89,13 +89,20 @@ cross-tenant causation is never revealed. Scoped rollback plan reads
 `/api/rollback/plan/correlation/:correlationId`) only consider in-scope records,
 so planning another tenant's action is `NOT_FOUND`, and scoped
 `/api/rollback/execute` stamps the configured labels onto the appended
-`action.rolled_back` facts.
+`action.rolled_back` facts. A policy carries an optional `tenant` scope
+(ADR-0004): scoped `/api/permissions/evaluate` and `/api/permissions/enforce`
+judge an action only against global and in-scope policies (deny-by-default still
+applies when nothing matches), `/api/permissions/policies` lists only global plus
+in-scope policies, and a label-scoped admin may only create/remove policies
+within its own scope — the policy's `tenant` is forced to the admin's label
+scope and a body naming a different tenant is rejected.
 
 Routes that read or mutate server-held configuration, whole-ledger integrity, or
 module projections without tenant-filtered semantics require an unscoped key.
-This includes permissions policy routes, audit summary/verify/export, and spend
-budget mutation. Tenant-scoped projections should be added route by route once
-each module has an explicit tenant model.
+This includes audit summary/verify/export and spend budget mutation; global
+policy management (and policies with no tenant) still requires an unscoped admin.
+Tenant-scoped projections should be added route by route once each module has an
+explicit tenant model.
 
 ```ts
 const app = await buildServer({

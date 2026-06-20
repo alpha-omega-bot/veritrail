@@ -32,17 +32,33 @@ class PermissionsModule implements VeritrailModule {
 
   addPolicy(input: unknown): Result<Policy, VeritrailError>; // mints id via ids.next('pol') if absent
   removePolicy(id: string): boolean;
-  listPolicies(): Policy[]; // priority desc
+  listPolicies(scope?: PolicyScope): Policy[]; // priority desc; scope filters to global + in-scope
 
-  evaluate(action: Action, opts?: { actor?: Actor }): PolicyDecision; // PURE, no I/O
+  evaluate(action: Action, opts?: { actor?: Actor; scope?: PolicyScope }): PolicyDecision; // PURE, no I/O
   enforce(
     action: Action,
-    opts?: { actor?: Actor },
+    opts?: { actor?: Actor; scope?: PolicyScope; labels?: Readonly<Record<string, string>> },
   ): Promise<Result<PolicyDecision, VeritrailError>>;
 }
 
+// PolicyScope = Readonly<Record<string, string>> — a principal's exact tenant labels.
+
 function createPermissionsModule(ctx: ModuleContext, config?: PermissionsConfig): PermissionsModule;
 ```
+
+### Tenant scoping (`Policy.tenant`)
+
+A policy with no `tenant` is **global** and applies to every principal. A policy
+with `tenant` labels applies only to a principal whose `scope` contains every one
+of those labels. `listPolicies`/`evaluate`/`enforce` take an optional `scope`:
+when set, only global and in-scope policies are considered, so a tenant is judged
+only by the rules that govern it. **Deny-by-default is preserved** — when no
+in-scope policy matches, the default effect (`deny`) still applies, so
+partitioning never implicitly allows. An unscoped principal (no `scope`) sees
+every policy. `enforce`'s `labels` are stamped onto the emitted
+`policy.evaluated` / `action.authorized` / `action.denied` facts so each tenant's
+projections see only its own enforcement decisions. See
+[ADR-0004](../../../docs/adr/0004-policy-tenant-scoping.md).
 
 ### Matching semantics (`Policy.match`)
 
