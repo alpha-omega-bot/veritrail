@@ -115,8 +115,8 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### decision-memory
 
-- [ ] Semantic recall via embeddings; outcome linkage (did the decision work?);
-      recency/decay weighting.
+- [ ] Semantic recall via embeddings; outcome linkage (did the decision work?).
+      (recency/decay weighting done — see below)
 - [x] `recall` score denominator uses distinct-token set size, diverging from the
       documented `sharedTokens / queryTokens` for repeated tokens; and negative
       `limit` in `list()` returns ALL — clamp/validate. Fixed: `list()` and
@@ -199,6 +199,21 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added decision-memory recency weighting (M2 feature-depth).
+  `recall` now accepts an opt-in `recencyHalfLifeMs`: when set, the lexical score
+  is multiplied by `0.5 ^ (ageMs / recencyHalfLifeMs)` using the decision's
+  authoritative ledger timestamp vs the injected clock's `now`, so a recent
+  weaker match can overtake an old stronger one (and the decay also applies to
+  empty-text recency recall). Default (unset / non-positive) leaves ranking purely
+  lexical — the #44 contract is unchanged. Added a `#projectTimestamped` projection
+  surfacing record timestamps (analogous to vendor-risk); `#projectDecisions`
+  reuses it. Deterministic, dependency-free, pure projection. Cleared the README
+  recency Phase 1 TODO. **Next:** remaining contained items (decision-memory
+  outcome-linkage needs a schema/event decision; forensics anomaly/snapshot/
+  bundles; vendor-risk SLA tracking; evidence cross-linking + pagination). The
+  dep/network items (embeddings, external capture, executor adapters) still need a
+  user call.
 
 - **2026-06-20** — Added forensics root-cause ranking (M2 feature-depth). New
   `rankRootCauses(correlationId, opts?)` returns the correlation's failure /

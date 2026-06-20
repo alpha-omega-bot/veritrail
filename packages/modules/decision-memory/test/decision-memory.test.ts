@@ -341,3 +341,73 @@ describe('recall', () => {
     expect(matches).toEqual([]);
   });
 });
+
+describe('recall recency weighting', () => {
+  const DAY = 86_400_000;
+
+  /** Module + a single shared clock so records age and recall's `now` advance together. */
+  function buildTimed(): { module: DecisionMemoryModule; clock: FixedClock } {
+    const clock = new FixedClock(1_700_000_000_000);
+    const ledger = createInMemoryLedger({ clock, ids: new SequentialIdGenerator() });
+    const ctx: ModuleContext = {
+      ledger,
+      clock,
+      ids: new SequentialIdGenerator(),
+      logger: noopLogger,
+    };
+    return { module: createDecisionMemoryModule(ctx), clock };
+  }
+
+  it('leaves ranking purely lexical when recencyHalfLifeMs is unset (default)', async () => {
+    const { module, clock } = buildTimed();
+    // Old strong match (2 shared tokens) vs recent weak match (1 shared token).
+    await module.record({ id: 'dec_old', actorId: 'a', summary: 'database engine tuning' });
+    clock.advance(90 * DAY);
+    await module.record({ id: 'dec_new', actorId: 'a', summary: 'database notes' });
+
+    const matches = await module.recall({ text: 'database engine' });
+    // No recency weighting: the stronger lexical match wins despite being older.
+    expect(matches.map((m) => m.decision.id)).toEqual(['dec_old', 'dec_new']);
+  });
+
+  it('lets a recent weaker match overtake an old stronger one with a short half-life', async () => {
+    const { module, clock } = buildTimed();
+    await module.record({ id: 'dec_old', actorId: 'a', summary: 'database engine tuning' });
+    clock.advance(90 * DAY);
+    await module.record({ id: 'dec_new', actorId: 'a', summary: 'database notes' });
+
+    // old: 2/2 * 0.5^(90/30) = 1 * 0.125 = 0.125
+    // new: 1/2 * 0.5^(0/30)  = 0.5
+    const matches = await module.recall({ text: 'database engine', recencyHalfLifeMs: 30 * DAY });
+    expect(matches.map((m) => m.decision.id)).toEqual(['dec_new', 'dec_old']);
+  });
+
+  it('halves a decision contribution every half-life', async () => {
+    const { module, clock } = buildTimed();
+    await module.record({ id: 'dec_1', actorId: 'a', summary: 'database engine' });
+    clock.advance(30 * DAY); // exactly one half-life old at recall time.
+
+    const matches = await module.recall({ text: 'database engine', recencyHalfLifeMs: 30 * DAY });
+    expect(matches).toHaveLength(1);
+    // full lexical match (1.0) halved once → 0.5.
+    expect(matches[0]?.score).toBeCloseTo(0.5, 10);
+  });
+
+  it('applies decay to empty-text (recency) recall as well', async () => {
+    const { module, clock } = buildTimed();
+    await module.record({ id: 'dec_1', actorId: 'a', summary: 'one' });
+    clock.advance(30 * DAY);
+
+    const matches = await module.recall({ text: '', recencyHalfLifeMs: 30 * DAY });
+    expect(matches[0]?.score).toBeCloseTo(0.5, 10);
+  });
+
+  it('ignores a non-positive half-life (stays lexical)', async () => {
+    const { module, clock } = buildTimed();
+    await module.record({ id: 'dec_1', actorId: 'a', summary: 'database engine' });
+    clock.advance(90 * DAY);
+
+    const matches = await module.recall({ text: 'database engine', recencyHalfLifeMs: 0 });
+    expect(matches[0]?.score).toBeCloseTo(1, 10); // no decay applied.
+  });
+});
