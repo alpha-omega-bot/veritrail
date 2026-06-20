@@ -62,6 +62,22 @@ describe('record', () => {
     expect(decision.id).toMatch(/^dec_/);
   });
 
+  it('records optional ledger labels on the decision fact', async () => {
+    const { module, ledger } = build();
+    const result = await module.record(
+      {
+        id: 'dec_scoped',
+        actorId: 'agent-1',
+        summary: 'Scoped deployment choice',
+      },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    expect(isOk(result)).toBe(true);
+
+    const records = await ledger.query({ types: ['decision.recorded'] });
+    expect(records[0]?.event.labels).toEqual({ tenant: 'acme', project: 'alpha' });
+  });
+
   it('preserves a caller-supplied id', async () => {
     const { module } = build();
     const result = await module.record({
@@ -119,6 +135,25 @@ describe('list', () => {
     const limited = await module.list({ limit: 2 });
     expect(limited.map((d) => d.id)).toEqual(['dec_c', 'dec_b']);
   });
+
+  it('filters list projections by ledger labels', async () => {
+    const { module } = build();
+    await module.record(
+      { id: 'dec_alpha', actorId: 'a', summary: 'alpha decision' },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    await module.record(
+      { id: 'dec_beta', actorId: 'a', summary: 'beta decision' },
+      { labels: { tenant: 'acme', project: 'beta' } },
+    );
+    await module.record(
+      { id: 'dec_other', actorId: 'a', summary: 'other tenant decision' },
+      { labels: { tenant: 'other', project: 'alpha' } },
+    );
+
+    const scoped = await module.list({ labels: { tenant: 'acme', project: 'alpha' } });
+    expect(scoped.map((d) => d.id)).toEqual(['dec_alpha']);
+  });
 });
 
 describe('get', () => {
@@ -134,6 +169,23 @@ describe('get', () => {
 
     const got = await module.get('dec_a');
     expect(got?.summary).toBe('revised');
+  });
+
+  it('filters get projections by ledger labels', async () => {
+    const { module } = build();
+    await module.record(
+      { id: 'dec_a', actorId: 'a', summary: 'visible' },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    await module.record(
+      { id: 'dec_b', actorId: 'a', summary: 'hidden' },
+      { labels: { tenant: 'acme', project: 'beta' } },
+    );
+
+    expect(
+      await module.get('dec_a', { labels: { tenant: 'acme', project: 'alpha' } }),
+    ).toMatchObject({ id: 'dec_a' });
+    expect(await module.get('dec_b', { labels: { tenant: 'acme', project: 'alpha' } })).toBeNull();
   });
 });
 
@@ -229,6 +281,24 @@ describe('recall', () => {
 
     const matches = await module.recall({ text: 'topic', limit: 1 });
     expect(matches).toHaveLength(1);
+  });
+
+  it('filters recall projections by ledger labels before ranking', async () => {
+    const { module } = build();
+    await module.record(
+      { id: 'dec_alpha', actorId: 'a', summary: 'deploy service' },
+      { labels: { tenant: 'acme', project: 'alpha' } },
+    );
+    await module.record(
+      { id: 'dec_beta', actorId: 'a', summary: 'deploy service' },
+      { labels: { tenant: 'acme', project: 'beta' } },
+    );
+
+    const matches = await module.recall({
+      text: 'deploy',
+      labels: { tenant: 'acme', project: 'alpha' },
+    });
+    expect(matches.map((m) => m.decision.id)).toEqual(['dec_alpha']);
   });
 
   it('returns an empty array when nothing matches the query', async () => {

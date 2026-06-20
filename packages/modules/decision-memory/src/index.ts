@@ -15,6 +15,7 @@
 
 import type {
   Decision,
+  EventQuery,
   LedgerRecord,
   ModuleContext,
   Result,
@@ -42,6 +43,20 @@ export interface RecallQuery {
   readonly actorId?: string;
   /** Maximum number of matches to return (default {@link DEFAULT_RECALL_LIMIT}). */
   readonly limit?: number;
+  /** Restrict recalled decisions to records carrying these exact ledger labels. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Optional ledger envelope values for recorded decision facts. */
+export interface DecisionRecordOptions {
+  /** Labels to write onto the `decision.recorded` event envelope. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Optional projection filters for listing/getting recorded decisions. */
+export interface DecisionProjectionOptions {
+  /** Restrict decisions to records carrying these exact ledger labels. */
+  readonly labels?: Readonly<Record<string, string>>;
 }
 
 /** Default number of matches `recall` returns when no `limit` is supplied. */
@@ -71,7 +86,10 @@ export class DecisionMemoryModule implements VeritrailModule {
    * queryable by actor. Returns a `VALIDATION` error for non-object or
    * schema-invalid input.
    */
-  async record(input: unknown): Promise<Result<LedgerRecord, VeritrailError>> {
+  async record(
+    input: unknown,
+    opts?: DecisionRecordOptions,
+  ): Promise<Result<LedgerRecord, VeritrailError>> {
     if (typeof input !== 'object' || input === null) {
       return err(validationError('decision record input must be an object'));
     }
@@ -101,6 +119,7 @@ export class DecisionMemoryModule implements VeritrailModule {
     return this.#ctx.ledger.append({
       type: 'decision.recorded',
       actorId: decision.actorId,
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
       payload: { decision },
     });
   }
@@ -111,8 +130,15 @@ export class DecisionMemoryModule implements VeritrailModule {
    * ledger is append-only); use {@link DecisionMemoryModule.get} for the latest
    * by id. Filters by `actorId` and applies `limit` when supplied.
    */
-  async list(opts?: { actorId?: string; limit?: number }): Promise<Decision[]> {
-    const decisions = await this.#projectDecisions(opts?.actorId);
+  async list(opts?: {
+    actorId?: string;
+    limit?: number;
+    labels?: Readonly<Record<string, string>>;
+  }): Promise<Decision[]> {
+    const decisions = await this.#projectDecisions({
+      ...(opts?.actorId !== undefined ? { actorId: opts.actorId } : {}),
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+    });
     decisions.reverse(); // ledger order is oldest-first; surface newest first.
     if (opts?.limit !== undefined && opts.limit >= 0) {
       return decisions.slice(0, opts.limit);
@@ -124,8 +150,8 @@ export class DecisionMemoryModule implements VeritrailModule {
    * Look up a single decision by id, returning the most recent recording for
    * that id, or `null` when none exists.
    */
-  async get(decisionId: string): Promise<Decision | null> {
-    const decisions = await this.#projectDecisions();
+  async get(decisionId: string, opts?: DecisionProjectionOptions): Promise<Decision | null> {
+    const decisions = await this.#projectDecisions(opts);
     let found: Decision | null = null;
     for (const decision of decisions) {
       if (decision.id === decisionId) found = decision; // keep the latest.
@@ -150,7 +176,10 @@ export class DecisionMemoryModule implements VeritrailModule {
       query.limit !== undefined && query.limit >= 0 ? query.limit : DEFAULT_RECALL_LIMIT;
 
     // `#projectDecisions` returns oldest-first; index gives recency tie-breaks.
-    const decisions = await this.#projectDecisions(query.actorId);
+    const decisions = await this.#projectDecisions({
+      ...(query.actorId !== undefined ? { actorId: query.actorId } : {}),
+      ...(query.labels !== undefined ? { labels: query.labels } : {}),
+    });
 
     const queryTokens = tokenize(query.text ?? '');
 
@@ -196,11 +225,15 @@ export class DecisionMemoryModule implements VeritrailModule {
    * Project decisions from the ledger in append (oldest-first) order, optionally
    * filtered by `actorId`.
    */
-  async #projectDecisions(actorId?: string): Promise<Decision[]> {
-    const records = await this.#ctx.ledger.query({
+  async #projectDecisions(
+    opts?: DecisionProjectionOptions & { actorId?: string },
+  ): Promise<Decision[]> {
+    const query: EventQuery = {
       types: ['decision.recorded'],
-      ...(actorId !== undefined ? { actorId } : {}),
-    });
+      ...(opts?.actorId !== undefined ? { actorId: opts.actorId } : {}),
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+    };
+    const records = await this.#ctx.ledger.query(query);
     const out: Decision[] = [];
     for (const record of records) {
       const decision = extractDecision(record);

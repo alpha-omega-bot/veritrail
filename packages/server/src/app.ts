@@ -405,13 +405,22 @@ function registerRoutes(
   });
 
   // ---- decision memory --------------------------------------------------
-  app.post('/api/decisions', unscopedWriteRoute(['ingest']), async (request, reply) =>
-    replyResult(reply, await decisionMemory.record(request.body)),
+  app.post('/api/decisions', writeRoute(['ingest']), async (request, reply) =>
+    replyResult(
+      reply,
+      await decisionMemory.record(request.body, decisionRecordOptions(request.principal)),
+    ),
   );
 
-  app.get('/api/decisions', unscopedReadRoute(decisionsRead), async (request, reply) => {
+  app.get('/api/decisions', readRoute(decisionsRead), async (request, reply) => {
     const q = request.query as Record<string, unknown>;
-    const opts: { actorId?: string; limit?: number } = {};
+    const opts: {
+      actorId?: string;
+      limit?: number;
+      labels?: Readonly<Record<string, string>>;
+    } = {
+      ...decisionProjectionOptions(request.principal),
+    };
     const actorId = asString(q['actorId']);
     if (actorId !== undefined) opts.actorId = actorId;
     const limit = parseOptionalLimit(q['limit']);
@@ -420,9 +429,16 @@ function registerRoutes(
     return reply.send(await decisionMemory.list(opts));
   });
 
-  app.get('/api/decisions/recall', unscopedReadRoute(decisionsRead), async (request, reply) => {
+  app.get('/api/decisions/recall', readRoute(decisionsRead), async (request, reply) => {
     const q = request.query as Record<string, unknown>;
-    const query: { text?: string; actorId?: string; limit?: number } = {};
+    const query: {
+      text?: string;
+      actorId?: string;
+      limit?: number;
+      labels?: Readonly<Record<string, string>>;
+    } = {
+      ...decisionProjectionOptions(request.principal),
+    };
     const text = asString(q['text']);
     if (text !== undefined) query.text = text;
     const actorId = asString(q['actorId']);
@@ -658,6 +674,20 @@ function spendProjectionOptions(
 ): { labelScope?: Readonly<Record<string, string>> } | undefined {
   const labelScope = principal?.labelScope;
   return labelScope === undefined ? undefined : { labelScope };
+}
+
+function decisionRecordOptions(
+  principal: ApiKeyPrincipal | undefined,
+): { labels?: Readonly<Record<string, string>> } | undefined {
+  const labelScope = principal?.labelScope;
+  return labelScope === undefined ? undefined : { labels: labelScope };
+}
+
+function decisionProjectionOptions(
+  principal: ApiKeyPrincipal | undefined,
+): { labels?: Readonly<Record<string, string>> } | undefined {
+  const labelScope = principal?.labelScope;
+  return labelScope === undefined ? undefined : { labels: labelScope };
 }
 
 function zodIssues(error: ZodError): JsonValue {

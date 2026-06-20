@@ -16,9 +16,11 @@ those events. There is **no separate store**.
 - **`record`** — validate a `Decision` (via `DecisionSchema`) and append a
   `decision.recorded` fact. An `id` is minted with `ids.next('dec')` when
   absent. The decision's `actorId` becomes the ledger envelope actor, so
-  decisions stay queryable by actor.
+  decisions stay queryable by actor. Optional record labels are written to the
+  ledger envelope for tenant/project-scoped projections.
 - **`list` / `get`** — project recorded decisions from the ledger
-  (most-recent-first; `get` returns the latest recording for an id).
+  (most-recent-first; `get` returns the latest recording for an id), optionally
+  filtered by exact ledger labels.
 - **`recall`** — rank decisions by lexical overlap with a free-text query.
 
 ## Public API
@@ -33,6 +35,15 @@ interface RecallQuery {
   text?: string;
   actorId?: string;
   limit?: number; // default 10
+  labels?: Readonly<Record<string, string>>;
+}
+
+interface DecisionRecordOptions {
+  labels?: Readonly<Record<string, string>>;
+}
+
+interface DecisionProjectionOptions {
+  labels?: Readonly<Record<string, string>>;
 }
 
 class DecisionMemoryModule implements VeritrailModule {
@@ -42,9 +53,16 @@ class DecisionMemoryModule implements VeritrailModule {
     capability: 'decision-memory';
   };
   constructor(ctx: ModuleContext);
-  record(input: unknown): Promise<Result<LedgerRecord, VeritrailError>>;
-  list(opts?: { actorId?: string; limit?: number }): Promise<Decision[]>;
-  get(decisionId: string): Promise<Decision | null>;
+  record(
+    input: unknown,
+    opts?: DecisionRecordOptions,
+  ): Promise<Result<LedgerRecord, VeritrailError>>;
+  list(opts?: {
+    actorId?: string;
+    limit?: number;
+    labels?: Readonly<Record<string, string>>;
+  }): Promise<Decision[]>;
+  get(decisionId: string, opts?: DecisionProjectionOptions): Promise<Decision | null>;
   recall(query: RecallQuery): Promise<DecisionMatch[]>;
 }
 
@@ -65,6 +83,10 @@ Results are filtered by `actorId` (when set), sorted by score descending then
 most-recent, and truncated to `limit` (default `10`). Decisions sharing no query
 tokens are dropped. When `query.text` is absent or has no tokens, recall returns
 the most-recent decisions, each with `score: 1`.
+
+When `labels` are supplied, `list`, `get`, and `recall` only project
+`decision.recorded` events whose ledger envelope carries every requested
+key/value pair. This is used by the HTTP server for label-scoped tenant views.
 
 ## Example
 

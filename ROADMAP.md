@@ -45,8 +45,9 @@ Make the system durable, secure, and operable for a first real deployment.
 - 🚧 **AuthN/AuthZ** on the server: API-key auth, OIDC bearer JWTs with static
   JWKS plus discovery/JWKS refresh, route roles/scopes, label-scoped raw ledger
   reads/writes, spend charges and spend read projections, signed administrative
-  mutation requests, ledger-recorded policy/budget changes, and fail-closed
-  scoped access for unpartitioned module projections are implemented;
+  mutation requests, ledger-recorded policy/budget changes, Decision Memory
+  writes/read projections, and fail-closed scoped access for unpartitioned
+  module projections are implemented;
   tenant-filtered projection semantics for the remaining modules and broader
   policy composition remain.
 - 🚧 **PII handling**: append-boundary field redaction hook and path redactor are

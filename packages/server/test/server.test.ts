@@ -726,6 +726,150 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('enforces label scopes on decision writes and decision read projections', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'tenant-ingest',
+            actorId: 'tenant-agent',
+            secret: 'tenant-decision-ingest-secret-0001',
+            roles: ['ingest'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'tenant-decision-reader',
+            actorId: 'tenant-operator',
+            secret: 'tenant-decision-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['decisions:read'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'operator',
+            actorId: 'operator-1',
+            secret: 'decision-reader-secret-0001',
+            roles: ['operator'],
+            scopes: ['decisions:read'],
+          },
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'decision-admin-secret-0001',
+            roles: ['admin'],
+          },
+        ],
+      },
+    });
+    try {
+      const scopedWrite = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/decisions',
+        headers: { authorization: 'Bearer tenant-decision-ingest-secret-0001', ...json },
+        payload: body({
+          id: 'dec_alpha',
+          actorId: 'tenant-agent',
+          summary: 'Deploy alpha service',
+          rationale: 'Alpha is ready',
+          chosen: 'deploy',
+        }),
+      });
+      expect(scopedWrite.statusCode).toBe(200);
+
+      const siblingProjectWrite = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: { authorization: 'Bearer decision-admin-secret-0001', ...json },
+        payload: body({
+          type: 'decision.recorded',
+          actorId: 'tenant-agent',
+          labels: { tenant: 'acme', project: 'beta' },
+          payload: {
+            decision: {
+              id: 'dec_beta',
+              actorId: 'tenant-agent',
+              summary: 'Deploy beta service',
+              rationale: 'Beta is separate',
+              chosen: 'deploy',
+            },
+          },
+        }),
+      });
+      expect(siblingProjectWrite.statusCode).toBe(201);
+
+      const otherTenantWrite = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/events',
+        headers: { authorization: 'Bearer decision-admin-secret-0001', ...json },
+        payload: body({
+          type: 'decision.recorded',
+          actorId: 'tenant-agent',
+          labels: { tenant: 'other', project: 'alpha' },
+          payload: {
+            decision: {
+              id: 'dec_other',
+              actorId: 'tenant-agent',
+              summary: 'Deploy other service',
+              rationale: 'Other tenant',
+              chosen: 'deploy',
+            },
+          },
+        }),
+      });
+      expect(otherTenantWrite.statusCode).toBe(201);
+
+      const scopedList = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/decisions',
+        headers: { authorization: 'Bearer tenant-decision-reader-secret-0001' },
+      });
+      expect(scopedList.statusCode).toBe(200);
+      expect((scopedList.json() as Array<{ id: string }>).map((decision) => decision.id)).toEqual([
+        'dec_alpha',
+      ]);
+
+      const scopedRecall = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/decisions/recall?text=deploy',
+        headers: { authorization: 'Bearer tenant-decision-reader-secret-0001' },
+      });
+      expect(scopedRecall.statusCode).toBe(200);
+      expect(
+        (scopedRecall.json() as Array<{ decision: { id: string } }>).map(
+          (match) => match.decision.id,
+        ),
+      ).toEqual(['dec_alpha']);
+
+      const actorFiltered = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/decisions?actorId=other-agent',
+        headers: { authorization: 'Bearer tenant-decision-reader-secret-0001' },
+      });
+      expect(actorFiltered.statusCode).toBe(200);
+      expect(actorFiltered.json()).toEqual([]);
+
+      const scopedAudit = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/audit/events?type=decision.recorded',
+        headers: { authorization: 'Bearer tenant-decision-reader-secret-0001' },
+      });
+      expect(scopedAudit.statusCode).toBe(403);
+
+      const unscopedList = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/decisions',
+        headers: { authorization: 'Bearer decision-reader-secret-0001' },
+      });
+      expect(unscopedList.statusCode).toBe(200);
+      expect((unscopedList.json() as Array<{ id: string }>).map((decision) => decision.id)).toEqual(
+        ['dec_other', 'dec_beta', 'dec_alpha'],
+      );
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('denies label-scoped principals on unpartitioned module projections', async () => {
     const scopedApp = await buildServer({
       logger: false,
@@ -746,7 +890,6 @@ describe('Veritrail HTTP server auth', () => {
             scopes: [
               'audit:read',
               'permissions:read',
-              'decisions:read',
               'evidence:read',
               'vendor-risk:read',
               'forensics:read',
@@ -812,8 +955,6 @@ describe('Veritrail HTTP server auth', () => {
         ['GET', '/api/audit/verify'],
         ['GET', '/api/audit/export'],
         ['POST', '/api/permissions/evaluate'],
-        ['GET', '/api/decisions'],
-        ['GET', '/api/decisions/recall'],
         ['GET', '/api/evidence'],
         ['GET', '/api/evidence/evd-1/trace'],
         ['POST', '/api/evidence/evd-1/verify'],
@@ -854,13 +995,6 @@ describe('Veritrail HTTP server auth', () => {
           '/api/permissions/enforce',
           {
             action: { id: 'action-1', actorId: 'tenant-agent', type: 'tool.search' },
-          },
-        ],
-        [
-          '/api/decisions',
-          {
-            actorId: 'tenant-agent',
-            summary: 'Use scoped module route',
           },
         ],
         [
