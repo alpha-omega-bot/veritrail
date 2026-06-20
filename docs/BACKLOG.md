@@ -55,11 +55,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       reads/writes, spend charges and spend read projections, signed
       administrative mutation requests, ledger-recorded administrative
       policy/budget changes, Decision Memory writes/read projections, Evidence
-      writes/read projections, Vendor Risk writes/read projections, and
-      fail-closed scoped access for unpartitioned module projections are
-      implemented. Remaining work: tenant-filtered projection semantics for the
-      remaining modules (forensics incident/cause, rollback, permissions) and
-      broader policy composition. (threat: S1)
+      writes/read projections, Vendor Risk writes/read projections, Forensics
+      incident/cause-chain read projections, and fail-closed scoped access for
+      unpartitioned module projections are implemented. Remaining work:
+      tenant-filtered projection semantics for the remaining modules (rollback,
+      permissions) and broader policy composition. (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -176,6 +176,17 @@ tests) — they are done:
 ## Session log
 
 - **2026-06-20** — Continued P1 server auth projection-tenancy semantics with
+  Forensics. Added `ForensicsProjectionOptions` to the module: `incident` now
+  filters the correlation's events by exact labels (counts/timeline reflect only
+  in-scope events), and `causeChain` builds its id-index from in-scope records
+  only, so a hop to an out-of-scope link truncates the walk at the tenant
+  boundary (a chain rooted at another tenant returns empty — fail-closed). Wired
+  `/api/forensics/incident` and `/api/forensics/cause/:causationId` from
+  unscoped to scoped reads, updated the stale "denies unpartitioned projections"
+  test, and added module + HTTP scoping tests. Rollback and permissions remain
+  fail-closed for scoped principals until their tenant model is explicit.
+  **Next:** rollback tenant scoping, or move to P1 PII encryption/retention or
+  append batching; then Milestone 2 scaffold-module GA work.
   Vendor Risk. Added `VendorRiskRecordOptions`/`VendorRiskProjectionOptions` to
   the vendor-risk module so writes can stamp ledger labels and reads filter by
   exact labels. Scoped `/api/vendors` and `/api/vendors/signals` writes now stamp

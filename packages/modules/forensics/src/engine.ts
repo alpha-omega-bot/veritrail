@@ -2,6 +2,21 @@ import type { EventQuery, LedgerRecord, ModuleContext, VeritrailModule } from '@
 
 import { summarize } from './summarize.js';
 
+/** Optional projection filters for forensic reads. */
+export interface ForensicsProjectionOptions {
+  /** Restrict the projection to records carrying these exact ledger labels. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Does a record carry every one of the given exact labels? */
+function recordHasLabels(
+  record: LedgerRecord,
+  labels: Readonly<Record<string, string>> | undefined,
+): boolean {
+  if (labels === undefined) return true;
+  return Object.entries(labels).every(([key, value]) => record.event.labels[key] === value);
+}
+
 /** A single event projected into a compact, presentation-ready timeline row. */
 export interface TimelineEntry {
   /** Ledger sequence number (stable, monotonic ordering key). */
@@ -75,8 +90,14 @@ export class ForensicsModule implements VeritrailModule {
    * a seq-ordered timeline plus rolled-up counts (failures, denials, rollbacks),
    * distinct actors, and the first/last timestamps.
    */
-  async incident(correlationId: string): Promise<IncidentReport> {
-    const records = await this.#ctx.ledger.query({ correlationId });
+  async incident(
+    correlationId: string,
+    opts?: ForensicsProjectionOptions,
+  ): Promise<IncidentReport> {
+    const records = await this.#ctx.ledger.query({
+      correlationId,
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+    });
 
     const entries: TimelineEntry[] = [];
     const counts: Record<string, number> = {};
@@ -146,10 +167,18 @@ export class ForensicsModule implements VeritrailModule {
    * found. Stops when a link is missing or a cycle is detected, so the result is
    * always finite and acyclic.
    */
-  async causeChain(causationId: string): Promise<LedgerRecord[]> {
+  async causeChain(
+    causationId: string,
+    opts?: ForensicsProjectionOptions,
+  ): Promise<LedgerRecord[]> {
     const records = await this.#ctx.ledger.readAll();
     const byId = new Map<string, LedgerRecord>();
-    for (const record of records) byId.set(record.id, record);
+    for (const record of records) {
+      // Out-of-scope records are not indexed, so a hop into another tenant's
+      // record is treated as a missing link and the chain truncates at the
+      // boundary rather than leaking cross-tenant causation.
+      if (recordHasLabels(record, opts?.labels)) byId.set(record.id, record);
+    }
 
     const chain: LedgerRecord[] = [];
     const visited = new Set<string>();
