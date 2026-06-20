@@ -30,8 +30,9 @@ export interface DecisionMatch {
   readonly decision: Decision;
   /**
    * Relevance score in `[0, 1]`: the fraction of *distinct* query tokens that
-   * appear in the decision's searchable text. Empty-text recall yields a score
-   * of `1`.
+   * appear in the decision's searchable text. Empty-text recall yields a base
+   * score of `1`. When `recencyHalfLifeMs` is set, the score is additionally
+   * scaled by an age-decay factor in `(0, 1]`.
    */
   readonly score: number;
 }
@@ -46,6 +47,15 @@ export interface RecallQuery {
   readonly limit?: number;
   /** Restrict recalled decisions to records carrying these exact ledger labels. */
   readonly labels?: Readonly<Record<string, string>>;
+  /**
+   * Opt-in recency weighting. When set to a positive number of milliseconds, the
+   * lexical score is multiplied by `0.5 ^ (ageMs / recencyHalfLifeMs)`, where age
+   * is measured from the decision's authoritative ledger timestamp to the
+   * injected clock's `now`. So a decision's contribution halves every
+   * `recencyHalfLifeMs`. Unset (or non-positive) leaves ranking purely lexical
+   * with recency only as a tie-break.
+   */
+  readonly recencyHalfLifeMs?: number;
 }
 
 /** Optional ledger envelope values for recorded decision facts. */
@@ -181,44 +191,49 @@ export class DecisionMemoryModule implements VeritrailModule {
     // to 0 (empty) rather than silently falling back to the default.
     const limit = query.limit === undefined ? DEFAULT_RECALL_LIMIT : Math.max(0, query.limit);
 
-    // `#projectDecisions` returns oldest-first; index gives recency tie-breaks.
-    const decisions = await this.#projectDecisions({
+    // `#projectTimestamped` returns oldest-first; index gives recency tie-breaks.
+    const decisions = await this.#projectTimestamped({
       ...(query.actorId !== undefined ? { actorId: query.actorId } : {}),
       ...(query.labels !== undefined ? { labels: query.labels } : {}),
     });
 
+    const halfLife =
+      query.recencyHalfLifeMs !== undefined && query.recencyHalfLifeMs > 0
+        ? query.recencyHalfLifeMs
+        : undefined;
+    const now = halfLife !== undefined ? this.#ctx.clock.now() : 0;
+    const decay = (timestamp: number): number =>
+      halfLife === undefined ? 1 : Math.pow(0.5, Math.max(0, now - timestamp) / halfLife);
+
     const queryTokens = tokenize(query.text ?? '');
-
-    // No usable query text: pure recency ordering, score 1.
-    if (queryTokens.length === 0) {
-      const recent: DecisionMatch[] = [];
-      for (let i = decisions.length - 1; i >= 0; i -= 1) {
-        const decision = decisions[i];
-        if (!decision) continue;
-        recent.push({ decision, score: 1 });
-      }
-      return recent.slice(0, limit);
-    }
-
-    const querySet = new Set(queryTokens);
 
     interface Scored {
       readonly match: DecisionMatch;
       readonly index: number;
     }
     const scored: Scored[] = [];
-    for (let index = 0; index < decisions.length; index += 1) {
-      const decision = decisions[index];
-      if (!decision) continue;
-      const docTokens = tokenize(searchableText(decision));
-      const docSet = new Set(docTokens);
-      let shared = 0;
-      for (const token of querySet) {
-        if (docSet.has(token)) shared += 1;
+
+    // No usable query text: base score 1, optionally recency-weighted.
+    if (queryTokens.length === 0) {
+      for (let index = 0; index < decisions.length; index += 1) {
+        const entry = decisions[index];
+        if (!entry) continue;
+        scored.push({ match: { decision: entry.decision, score: decay(entry.timestamp) }, index });
       }
-      if (shared === 0) continue; // not relevant.
-      const score = shared / Math.max(1, querySet.size);
-      scored.push({ match: { decision, score }, index });
+    } else {
+      const querySet = new Set(queryTokens);
+      for (let index = 0; index < decisions.length; index += 1) {
+        const entry = decisions[index];
+        if (!entry) continue;
+        const docSet = new Set(tokenize(searchableText(entry.decision)));
+        let shared = 0;
+        for (const token of querySet) {
+          if (docSet.has(token)) shared += 1;
+        }
+        if (shared === 0) continue; // not relevant.
+        const score = (shared / querySet.size) * decay(entry.timestamp);
+        scored.push({ match: { decision: entry.decision, score }, index });
+      }
     }
 
     // Score descending, then most-recent (higher ledger index) first.
@@ -234,16 +249,27 @@ export class DecisionMemoryModule implements VeritrailModule {
   async #projectDecisions(
     opts?: DecisionProjectionOptions & { actorId?: string },
   ): Promise<Decision[]> {
+    const timestamped = await this.#projectTimestamped(opts);
+    return timestamped.map((entry) => entry.decision);
+  }
+
+  /**
+   * Project decisions paired with their authoritative ledger timestamps, in
+   * append (oldest-first) order, optionally filtered by `actorId`.
+   */
+  async #projectTimestamped(
+    opts?: DecisionProjectionOptions & { actorId?: string },
+  ): Promise<Array<{ decision: Decision; timestamp: number }>> {
     const query: EventQuery = {
       types: ['decision.recorded'],
       ...(opts?.actorId !== undefined ? { actorId: opts.actorId } : {}),
       ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
     };
     const records = await this.#ctx.ledger.query(query);
-    const out: Decision[] = [];
+    const out: Array<{ decision: Decision; timestamp: number }> = [];
     for (const record of records) {
       const decision = extractDecision(record);
-      if (decision) out.push(decision);
+      if (decision) out.push({ decision, timestamp: record.timestamp });
     }
     return out;
   }

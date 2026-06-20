@@ -36,6 +36,7 @@ interface RecallQuery {
   actorId?: string;
   limit?: number; // default 10
   labels?: Readonly<Record<string, string>>;
+  recencyHalfLifeMs?: number; // opt-in: decay score by decision age
 }
 
 interface DecisionRecordOptions {
@@ -86,6 +87,14 @@ returns an empty result). Decisions sharing no query tokens are dropped. When
 `query.text` is absent or has no tokens, recall returns the most-recent
 decisions, each with `score: 1`.
 
+Set `recencyHalfLifeMs` to a positive number to opt into **recency weighting**:
+the lexical score is multiplied by `0.5 ^ (ageMs / recencyHalfLifeMs)`, where age
+is measured from the decision's authoritative ledger timestamp to the injected
+clock's `now`. A decision's contribution then halves every `recencyHalfLifeMs`,
+so a recent weaker match can outrank an old stronger one. The decay also applies
+to empty-text (pure recency) recall. Unset (or non-positive) leaves ranking
+purely lexical with recency only as a tie-break.
+
 When `labels` are supplied, `list`, `get`, and `recall` only project
 `decision.recorded` events whose ledger envelope carries every requested
 key/value pair. This is used by the HTTP server for label-scoped tenant views.
@@ -116,5 +125,3 @@ const hits = await memory.recall({ text: 'database consistency' });
   embedding similarity so paraphrases and synonyms match.
 - **Outcome linkage** — join decisions to the `action.*` events they caused
   (via `relatedActionIds`) to surface which decisions led to good/bad outcomes.
-- **Recency / decay weighting** — blend a time-decay factor into the relevance
-  score so recent decisions are preferred without dominating strong matches.
