@@ -18,7 +18,10 @@ export type {
   RollbackPlan,
   RollbackOutcome,
   RollbackResult,
+  RollbackMode,
+  RollbackExecuteOptions,
   CompensationExecutor,
+  CompensationContext,
   RollbackRecordOptions,
   RollbackProjectionOptions,
 } from './engine.js';

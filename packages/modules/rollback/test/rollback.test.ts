@@ -457,6 +457,81 @@ describe('execute idempotency (finding 1)', () => {
   });
 });
 
+describe('execute summary and saga modes', () => {
+  async function twoExecutedActions(): Promise<{
+    mod: ReturnType<typeof createRollbackModule>;
+    combined: { steps: RollbackStep[]; unreversible: string[] };
+  }> {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    await propose(ctx, reversibleAction('a'));
+    await executeAction(ctx, 'a');
+    await propose(ctx, reversibleAction('b'));
+    await executeAction(ctx, 'b');
+    const planA = await mod.planForAction('a');
+    const planB = await mod.planForAction('b');
+    if (!planA.ok || !planB.ok) throw new Error('expected plans');
+    return {
+      mod,
+      combined: { steps: [...planA.value.steps, ...planB.value.steps], unreversible: [] },
+    };
+  }
+
+  it('reports a completed summary with per-status counts (best-effort default)', async () => {
+    const { mod, combined } = await twoExecutedActions();
+    const result = await mod.execute(combined);
+    expect(result.completed).toBe(true);
+    expect(result.counts).toEqual({ rolled_back: 2, already_rolled_back: 0, skipped: 0 });
+    expect(result.haltedAt).toBeUndefined();
+  });
+
+  it('best-effort attempts every step even after a failure', async () => {
+    const { mod, combined } = await twoExecutedActions();
+    // The first step's executor fails; the second succeeds.
+    const executor: CompensationExecutor = async (step) =>
+      step.actionId === 'a' ? { ok: false, detail: 'boom' } : { ok: true };
+
+    const result = await mod.execute(combined, executor);
+    expect(result.completed).toBe(false);
+    expect(result.haltedAt).toBeUndefined();
+    expect(result.counts).toEqual({ rolled_back: 1, already_rolled_back: 0, skipped: 1 });
+    expect(result.outcomes.map((o) => o.status)).toEqual(['skipped', 'rolled_back']);
+  });
+
+  it('stop_on_failure halts at the first failing step', async () => {
+    const { mod, combined } = await twoExecutedActions();
+    let bAttempted = false;
+    const executor: CompensationExecutor = async (step) => {
+      if (step.actionId === 'b') bAttempted = true;
+      return step.actionId === 'a' ? { ok: false, detail: 'boom' } : { ok: true };
+    };
+
+    const result = await mod.execute(combined, executor, { mode: 'stop_on_failure' });
+    expect(result.completed).toBe(false);
+    expect(result.haltedAt).toBe('a');
+    expect(result.outcomes).toHaveLength(1);
+    expect(bAttempted).toBe(false);
+  });
+
+  it('a benign skip (strategy none) does not halt stop_on_failure', async () => {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    await propose(ctx, reversibleAction('a'));
+    await executeAction(ctx, 'a');
+    const planA = await mod.planForAction('a');
+    if (!planA.ok) throw new Error('expected plan');
+    const combined = {
+      steps: [{ actionId: 'noop', strategy: 'none' as const }, ...planA.value.steps],
+      unreversible: [],
+    };
+
+    const result = await mod.execute(combined, undefined, { mode: 'stop_on_failure' });
+    expect(result.completed).toBe(true);
+    expect(result.haltedAt).toBeUndefined();
+    expect(result.counts).toEqual({ rolled_back: 1, already_rolled_back: 0, skipped: 1 });
+  });
+});
+
 describe('planForCorrelation execution resolution (finding 2)', () => {
   it('plans an executed action whose receipt omits the correlationId', async () => {
     const ctx = makeContext();

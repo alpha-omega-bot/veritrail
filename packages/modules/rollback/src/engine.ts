@@ -52,7 +52,29 @@ export interface RollbackOutcome {
 /** The aggregate result of executing a {@link RollbackPlan}. */
 export interface RollbackResult {
   readonly outcomes: RollbackOutcome[];
+  /**
+   * True when the plan applied with no failure: every step was `rolled_back`,
+   * `already_rolled_back`, or skipped only because its strategy is `none`. False
+   * when any step failed (executor error or a failed `action.rolled_back` append).
+   */
+  readonly completed: boolean;
+  /** Count of outcomes by status. */
+  readonly counts: Record<RollbackOutcome['status'], number>;
+  /** In `stop_on_failure` mode, the actionId of the step that halted execution. */
+  readonly haltedAt?: string;
 }
+
+/** How a {@link RollbackPlan} is executed when a step fails. */
+export type RollbackMode =
+  /** Attempt every step regardless of failures (the default). */
+  | 'best_effort'
+  /**
+   * Stop at the first failing step (executor error or failed record). Use for
+   * ordered, dependent unwinds where compensating a later step is unsafe once an
+   * earlier one has failed. Benign skips (`none` strategy, already rolled back)
+   * do not halt.
+   */
+  | 'stop_on_failure';
 
 /** Context passed to a {@link CompensationExecutor} for each step. */
 export interface CompensationContext {
@@ -84,6 +106,12 @@ const defaultExecutor: CompensationExecutor = async () => ({ ok: true });
 export interface RollbackRecordOptions {
   /** Labels to write onto appended `action.rolled_back` event envelopes. */
   readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Options for {@link RollbackModule.execute}. */
+export interface RollbackExecuteOptions extends RollbackRecordOptions {
+  /** Failure handling. Defaults to `best_effort`. */
+  readonly mode?: RollbackMode;
 }
 
 /** Optional projection filters for rollback plan reads. */
@@ -273,77 +301,128 @@ export class RollbackModule {
    * and report `rolled_back`; on executor failure (or a failed append) report
    * `skipped` and append nothing. `none` strategies are skipped without invoking
    * the executor.
+   *
+   * With `mode: 'stop_on_failure'`, execution halts at the first failing step
+   * (executor error or failed append) and reports it in `haltedAt`; remaining
+   * steps are not attempted. The default `best_effort` mode attempts every step.
+   * The returned {@link RollbackResult} summarizes the run (`completed`, per-status
+   * `counts`).
    */
   async execute(
     plan: RollbackPlan,
     executor: CompensationExecutor = defaultExecutor,
-    opts?: RollbackRecordOptions,
+    opts?: RollbackExecuteOptions,
   ): Promise<RollbackResult> {
+    const mode: RollbackMode = opts?.mode ?? 'best_effort';
     const outcomes: RollbackOutcome[] = [];
     const alreadyRolledBack = await this.#rolledBackActionIds(opts);
+    let haltedAt: string | undefined;
+    let failureOccurred = false;
 
     for (const step of plan.steps) {
-      if (step.strategy === 'none') {
-        outcomes.push({ actionId: step.actionId, status: 'skipped', detail: 'strategy is none' });
-        continue;
+      const { outcome, failed } = await this.#executeStep(step, executor, alreadyRolledBack, opts);
+      outcomes.push(outcome);
+      if (failed) {
+        failureOccurred = true;
+        if (mode === 'stop_on_failure') {
+          haltedAt = step.actionId;
+          break;
+        }
       }
+    }
 
-      if (alreadyRolledBack.has(step.actionId)) {
-        outcomes.push({
+    const counts: Record<RollbackOutcome['status'], number> = {
+      rolled_back: 0,
+      already_rolled_back: 0,
+      skipped: 0,
+    };
+    for (const outcome of outcomes) counts[outcome.status] += 1;
+
+    return {
+      outcomes,
+      completed: !failureOccurred,
+      counts,
+      ...(haltedAt !== undefined ? { haltedAt } : {}),
+    };
+  }
+
+  /**
+   * Attempt one step. Returns the outcome plus whether it was a *failure* (an
+   * executor error or a failed record) — as opposed to a benign skip (`none`
+   * strategy or an already-recorded rollback), which does not halt a
+   * `stop_on_failure` run.
+   */
+  async #executeStep(
+    step: RollbackStep,
+    executor: CompensationExecutor,
+    alreadyRolledBack: Set<string>,
+    opts: RollbackRecordOptions | undefined,
+  ): Promise<{ outcome: RollbackOutcome; failed: boolean }> {
+    if (step.strategy === 'none') {
+      return {
+        outcome: { actionId: step.actionId, status: 'skipped', detail: 'strategy is none' },
+        failed: false,
+      };
+    }
+
+    if (alreadyRolledBack.has(step.actionId)) {
+      return {
+        outcome: {
           actionId: step.actionId,
           status: 'already_rolled_back',
           detail: 'compensation already recorded on the ledger',
-        });
-        continue;
-      }
+        },
+        failed: false,
+      };
+    }
 
-      const result = await executor(step, { idempotencyKey: step.actionId });
-      if (!result.ok) {
-        outcomes.push({
+    const result = await executor(step, { idempotencyKey: step.actionId });
+    if (!result.ok) {
+      return {
+        outcome: {
           actionId: step.actionId,
           status: 'skipped',
           detail: result.detail ?? 'executor reported failure',
-        });
-        continue;
-      }
-
-      const reason = `rolled back via ${step.strategy}`;
-      const appended = await this.#ctx.ledger.append({
-        type: 'action.rolled_back',
-        actorId: this.info.name,
-        ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
-        payload: {
-          actionId: step.actionId,
-          reason,
-          ...(result.compensationActionId !== undefined
-            ? { compensationActionId: result.compensationActionId }
-            : {}),
         },
-      });
+        failed: true,
+      };
+    }
 
-      if (appended.ok === false) {
-        // The side effect ran but recording it failed. The outcome is reported
-        // as skipped; a retry will re-invoke the executor with the same
-        // idempotencyKey (so it can dedupe) and record the rollback then.
-        outcomes.push({
+    const reason = `rolled back via ${step.strategy}`;
+    const appended = await this.#ctx.ledger.append({
+      type: 'action.rolled_back',
+      actorId: this.info.name,
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+      payload: {
+        actionId: step.actionId,
+        reason,
+        ...(result.compensationActionId !== undefined
+          ? { compensationActionId: result.compensationActionId }
+          : {}),
+      },
+    });
+
+    if (appended.ok === false) {
+      // The side effect ran but recording it failed. Reported as a failure skip;
+      // a retry will re-invoke the executor with the same idempotencyKey (so it
+      // can dedupe) and record the rollback then.
+      return {
+        outcome: {
           actionId: step.actionId,
           status: 'skipped',
           detail: `failed to record rollback: ${appended.error.message}`,
-        });
-        continue;
-      }
-
-      // Guard against re-recording within this same call should a duplicate step
-      // appear in the plan.
-      alreadyRolledBack.add(step.actionId);
-      outcomes.push({
-        actionId: step.actionId,
-        status: 'rolled_back',
-        detail: result.detail ?? reason,
-      });
+        },
+        failed: true,
+      };
     }
 
-    return { outcomes };
+    // Guard against re-recording within this same call should a duplicate step
+    // appear in the plan.
+    alreadyRolledBack.add(step.actionId);
+    return {
+      outcome: { actionId: step.actionId, status: 'rolled_back', detail: result.detail ?? reason },
+      failed: false,
+    };
   }
 
   /** Action ids that already have an `action.rolled_back` fact on the ledger. */
