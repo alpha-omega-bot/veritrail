@@ -23,6 +23,10 @@ demand, so it can never drift from the system of record.
   effects reached, returning a `BlastRadiusReport` (impacted seq-ordered
   timeline, distinct affected actors and correlations, and failure / denial /
   rollback tallies within the radius). Returns `NOT_FOUND` for an unknown root.
+- **`rankRootCauses(correlationId)`** — ranks the correlation's failure / denial /
+  rollback events worst-first by the size of each one's forward blast radius
+  (most downstream impact first), ties broken toward the earliest event. A
+  deterministic baseline heuristic, not a causal-inference model.
 
 ## Public API
 
@@ -58,6 +62,15 @@ interface BlastRadiusReport {
   rollbacks: number;
 }
 
+interface RootCauseCandidate {
+  id: string;
+  seq: number;
+  type: string; // action.failed | action.denied | action.rolled_back
+  actorId: string;
+  summary: string;
+  impactedCount: number; // forward blast radius (downstream events, excl. itself)
+}
+
 class ForensicsModule implements VeritrailModule {
   readonly info: { name: '@veritrail/forensics'; version: '0.1.0'; capability: 'forensics' };
   constructor(ctx: ModuleContext);
@@ -68,6 +81,10 @@ class ForensicsModule implements VeritrailModule {
     rootId: string,
     opts?: ForensicsProjectionOptions,
   ): Promise<Result<BlastRadiusReport, VeritrailError>>;
+  rankRootCauses(
+    correlationId: string,
+    opts?: ForensicsProjectionOptions,
+  ): Promise<RootCauseCandidate[]>;
 }
 
 interface ForensicsProjectionOptions {
@@ -86,8 +103,9 @@ correlation; `causeChain` walks the causal graph over in-scope records only, so
 a hop to an out-of-scope link truncates the chain at the tenant boundary rather
 than revealing cross-tenant causation. `blastRadius` likewise only reaches
 in-scope downstream records, so the radius truncates at the boundary and a root
-outside the scope is `NOT_FOUND`. The server uses these options to enforce
-per-tenant API-key label scopes.
+outside the scope is `NOT_FOUND`. `rankRootCauses` only considers in-scope
+candidates and counts in-scope downstream events. The server uses these options
+to enforce per-tenant API-key label scopes.
 
 ## Example
 
@@ -137,5 +155,3 @@ console.log(report.entries.map((e) => e.summary));
   off-baseline actor behaviour within a correlation.
 - **Snapshot diffs** — reconstruct and diff pre/post state from
   `action.executed` results and rollback snapshot references.
-- **Root-cause ranking** — score and order candidate root-cause events in a
-  causal chain rather than returning the raw chain.

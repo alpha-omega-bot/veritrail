@@ -445,6 +445,133 @@ describe('ForensicsModule.blastRadius', () => {
   });
 });
 
+describe('ForensicsModule.rankRootCauses', () => {
+  it('ranks candidate root causes by downstream blast radius, worst first', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    // run-1: a denial with no downstream, and a failure with two downstream events.
+    const denial = await append(ledger, clock, {
+      type: 'action.denied',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      payload: { actionId: 'act-d', reason: 'policy block' },
+    });
+    const failure = await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-2',
+      correlationId: 'run-1',
+      payload: { actionId: 'act-f', error: 'boom' },
+    });
+    const down1 = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-2',
+      correlationId: 'run-1',
+      causationId: failure.id,
+      payload: { text: 'downstream 1' },
+    });
+    await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-2',
+      correlationId: 'run-1',
+      causationId: down1.id,
+      payload: { text: 'downstream 2' },
+    });
+
+    const ranked = await createForensicsModule(ctx).rankRootCauses('run-1');
+    // failure (impact 2) outranks the denial (impact 0).
+    expect(ranked.map((c) => c.id)).toEqual([failure.id, denial.id]);
+    expect(ranked[0]).toMatchObject({ type: 'action.failed', impactedCount: 2 });
+    expect(ranked[1]).toMatchObject({ type: 'action.denied', impactedCount: 0 });
+  });
+
+  it('breaks impact ties toward the earliest event', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    const first = await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      payload: { actionId: 'act-1', error: 'a' },
+    });
+    const second = await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      payload: { actionId: 'act-2', error: 'b' },
+    });
+
+    const ranked = await createForensicsModule(ctx).rankRootCauses('run-1');
+    // Equal impact (0 each): the earlier seq wins.
+    expect(ranked.map((c) => c.id)).toEqual([first.id, second.id]);
+    expect(first.seq).toBeLessThan(second.seq);
+  });
+
+  it('returns an empty list when the correlation has no failure/denial/rollback events', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    await append(ledger, clock, {
+      type: 'action.executed',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      payload: { actionId: 'act-1', outcome: 'success' },
+    });
+    await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      payload: { text: 'all good' },
+    });
+    expect(await createForensicsModule(ctx).rankRootCauses('run-1')).toEqual([]);
+  });
+
+  it('scopes candidates and downstream counts to the tenant labels', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    const acme = { tenant: 'acme', project: 'alpha' };
+    const other = { tenant: 'other', project: 'alpha' };
+    // acme failure with one in-scope downstream and one out-of-scope downstream.
+    const acmeFail = await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      labels: acme,
+      payload: { actionId: 'act-a', error: 'boom' },
+    });
+    await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      labels: acme,
+      causationId: acmeFail.id,
+      payload: { text: 'acme downstream' },
+    });
+    await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-9',
+      correlationId: 'run-1',
+      labels: other,
+      causationId: acmeFail.id,
+      payload: { text: 'other-tenant downstream' },
+    });
+    // A failure belonging entirely to another tenant must not appear for acme.
+    await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-9',
+      correlationId: 'run-1',
+      labels: other,
+      payload: { actionId: 'act-o', error: 'x' },
+    });
+
+    const module = createForensicsModule(ctx);
+    const scoped = await module.rankRootCauses('run-1', { labels: acme });
+    expect(scoped.map((c) => c.id)).toEqual([acmeFail.id]);
+    // Only the in-scope downstream note is counted.
+    expect(scoped[0]?.impactedCount).toBe(1);
+
+    // Unscoped: both failures are candidates; the acme one now counts both
+    // downstream notes.
+    const all = await module.rankRootCauses('run-1');
+    expect(all).toHaveLength(2);
+    expect(all[0]?.impactedCount).toBe(2);
+  });
+});
+
 describe('summarize', () => {
   it('summarizes denials with reason', () => {
     const s = summarize({

@@ -100,8 +100,8 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### forensics
 
-- [ ] Anomaly detection, root-cause ranking, snapshot diffs, shareable incident
-      bundles. (blast-radius analysis done — see below)
+- [ ] Anomaly detection, snapshot diffs, shareable incident bundles.
+      (blast-radius analysis + root-cause ranking done — see below)
 
 ### evidence
 
@@ -199,6 +199,20 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added forensics root-cause ranking (M2 feature-depth). New
+  `rankRootCauses(correlationId, opts?)` returns the correlation's failure /
+  denial / rollback events worst-first, scored by the size of each one's forward
+  blast radius (most downstream impact first), ties broken toward the earliest
+  event (`seq`). Composes on the blastRadius forward-walk (one shared
+  byId/children index, BFS forward-reach count per candidate). Documented as a
+  deterministic baseline heuristic, not a causal-inference model. Tenant-scoped:
+  out-of-scope candidates excluded, downstream counts stop at the boundary. Pure
+  ledger projection, no new deps. Cleared the README root-cause Phase 1 TODO.
+  **Next:** remaining forensics depth (anomaly detection, snapshot diffs,
+  incident bundles), then the contained items in other modules; the
+  dep/network items (embeddings, external capture, executor adapters) still need
+  a user call.
 
 - **2026-06-20** — Added forensics blast-radius analysis (M2 feature-depth). New
   `blastRadius(rootId, opts?)` is the forward complement of `causeChain`: it walks

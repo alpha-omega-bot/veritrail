@@ -12,5 +12,6 @@ export {
   type TimelineEntry,
   type IncidentReport,
   type BlastRadiusReport,
+  type RootCauseCandidate,
 } from './engine.js';
 export { summarize } from './summarize.js';
