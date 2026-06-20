@@ -89,6 +89,25 @@ export interface BlastRadiusReport {
   readonly rollbacks: number;
 }
 
+/** Event types that are candidate root causes within a correlation. */
+const ROOT_CAUSE_TYPES = new Set(['action.failed', 'action.denied', 'action.rolled_back']);
+
+/** A ranked candidate root-cause event for a correlation. */
+export interface RootCauseCandidate {
+  /** Ledger id of the candidate event. */
+  readonly id: string;
+  /** Ledger sequence number. */
+  readonly seq: number;
+  /** The candidate's event type (`action.failed` | `action.denied` | `action.rolled_back`). */
+  readonly type: string;
+  /** The actor that caused the event. */
+  readonly actorId: string;
+  /** A short human-readable description. */
+  readonly summary: string;
+  /** Number of causally-downstream events (its forward blast radius, excluding itself). */
+  readonly impactedCount: number;
+}
+
 function toTimelineEntry(record: LedgerRecord): TimelineEntry {
   return {
     seq: record.seq,
@@ -334,6 +353,80 @@ export class ForensicsModule implements VeritrailModule {
       rollbacks,
     });
   }
+
+  /**
+   * Rank the candidate root-cause events of a correlation, worst-first.
+   *
+   * A candidate is a failure / denial / rollback event whose `correlationId`
+   * matches. Each is scored by the size of its **forward blast radius** (how many
+   * causally-downstream events it accounts for), so the trigger that explains the
+   * most downstream damage ranks first; ties break toward the **earliest** event
+   * (lower `seq`), since an earlier trigger is the more likely root. This is a
+   * deterministic baseline heuristic, not a causal-inference model.
+   *
+   * Tenant-scoped: out-of-scope records are invisible, so candidates from other
+   * tenants are excluded and downstream counts stop at the boundary. Returns an
+   * empty list when the correlation has no candidate events.
+   */
+  async rankRootCauses(
+    correlationId: string,
+    opts?: ForensicsProjectionOptions,
+  ): Promise<RootCauseCandidate[]> {
+    const records = await this.#ctx.ledger.readAll();
+
+    const byId = new Map<string, LedgerRecord>();
+    const children = new Map<string, string[]>();
+    for (const record of records) {
+      if (!recordHasLabels(record, opts?.labels)) continue; // out-of-scope: invisible.
+      byId.set(record.id, record);
+      const parentId = record.event.causationId;
+      if (parentId !== undefined) {
+        const siblings = children.get(parentId);
+        if (siblings) siblings.push(record.id);
+        else children.set(parentId, [record.id]);
+      }
+    }
+
+    const candidates: RootCauseCandidate[] = [];
+    for (const record of byId.values()) {
+      if (record.event.correlationId !== correlationId) continue;
+      if (!ROOT_CAUSE_TYPES.has(record.event.type)) continue;
+      candidates.push({
+        id: record.id,
+        seq: record.seq,
+        type: record.event.type,
+        actorId: record.event.actorId,
+        summary: summarize(record.event),
+        impactedCount: forwardReachCount(record.id, children),
+      });
+    }
+
+    // Most downstream impact first; ties resolve to the earliest event.
+    candidates.sort((a, b) => b.impactedCount - a.impactedCount || a.seq - b.seq);
+    return candidates;
+  }
+}
+
+/**
+ * Count events causally downstream of `rootId` (excluding the root) by a
+ * breadth-first walk over the forward `children` adjacency, with a visited guard
+ * so cycles and shared subgraphs are counted once and the walk terminates.
+ */
+function forwardReachCount(rootId: string, children: Map<string, string[]>): number {
+  const enqueued = new Set<string>([rootId]);
+  const queue: string[] = [rootId];
+  let count = 0;
+  for (let head = 0; head < queue.length; head += 1) {
+    const id = queue[head]!;
+    if (id !== rootId) count += 1;
+    for (const childId of children.get(id) ?? []) {
+      if (!enqueued.has(childId)) {
+        enqueued.add(childId);
+        queue.push(childId);
+      }
+    }
+  }
+  return count;
 }
 
 /** Construct a {@link ForensicsModule} from a module context. */
