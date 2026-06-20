@@ -67,8 +67,14 @@ interface VendorRiskProjectionOptions {
   readonly labels?: Readonly<Record<string, string>>;
 }
 
+/** Construction-time options. */
+interface VendorRiskConfig {
+  /** Emit a `note` alert when a signal raises a vendor up across this band. */
+  readonly alertBand?: RiskBand;
+}
+
 class VendorRiskModule implements VeritrailModule {
-  constructor(ctx: ModuleContext);
+  constructor(ctx: ModuleContext, config?: VendorRiskConfig);
   register(
     input: unknown,
     opts?: VendorRiskRecordOptions,
@@ -87,7 +93,7 @@ class VendorRiskModule implements VeritrailModule {
   ingest(source: MonitorSource): Promise<number>;
 }
 
-function createVendorRiskModule(ctx: ModuleContext): VendorRiskModule;
+function createVendorRiskModule(ctx: ModuleContext, config?: VendorRiskConfig): VendorRiskModule;
 ```
 
 `register`/`recordSignal` validate input with the core's `VendorSchema` /
@@ -100,6 +106,19 @@ Passing `labels` on a write stamps them onto the `vendor.registered` /
 projection to vendor facts carrying exactly those labels. The server uses these
 options to enforce per-tenant API-key label scopes; a vendor registered without
 labels is not visible to a label-scoped reader.
+
+### Alert thresholds
+
+When constructed with `{ alertBand }`, `recordSignal` appends a `note` alert fact
+whenever a signal raises a vendor's time-decayed score **up across** that band —
+i.e. the vendor was below `alertBand` before the signal and at/above it after,
+both computed at the same instant. This is **edge-triggered**: a vendor already
+in-band does not re-alert on every subsequent signal. The alert `note` carries
+`data: { kind: 'vendor-risk.alert', vendorId, signalId, fromBand, toBand,
+alertBand, score }` and inherits the signal's labels. Alerting is best-effort:
+the `vendor.signal` append is always the returned record, and a failed alert is
+logged rather than failing the signal. It is computed as a pure projection over
+signal history — no state is held outside the ledger.
 
 ## Example
 
@@ -136,7 +155,5 @@ const ranked = await vr.assess(); // [{ vendorId: 'ven_openai', score, band, ...
 
 - **Real feeds** — `MonitorSource` adapters for status pages, CVE/advisory
   feeds, and SOC 2 / certification expiry.
-- **Alert thresholds** — emit alerts (e.g. a `note` event) when a vendor crosses
-  a configurable band or score delta.
 - **SLA tracking** — track availability/uptime signals against contractual SLAs
   and surface breaches.
