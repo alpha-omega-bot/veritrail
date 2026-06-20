@@ -136,6 +136,75 @@ describe('EvidenceModule.attach', () => {
   });
 });
 
+describe('EvidenceModule.list pagination', () => {
+  /** Attach five evidence items in a deterministic attachment order. */
+  async function seedFive(mod: EvidenceModule): Promise<void> {
+    for (let i = 1; i <= 5; i += 1) {
+      await mod.attach({ actorId: 'a', id: `evd-${i}`, kind: 'document', summary: `e${i}` });
+    }
+  }
+
+  it('returns all records in attachment order when unpaginated', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await seedFive(mod);
+    expect((await mod.list()).map((e) => e.id)).toEqual([
+      'evd-1',
+      'evd-2',
+      'evd-3',
+      'evd-4',
+      'evd-5',
+    ]);
+  });
+
+  it('applies limit and offset to page the result', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await seedFive(mod);
+    expect((await mod.list({ limit: 2 })).map((e) => e.id)).toEqual(['evd-1', 'evd-2']);
+    expect((await mod.list({ offset: 2, limit: 2 })).map((e) => e.id)).toEqual(['evd-3', 'evd-4']);
+    expect((await mod.list({ offset: 4, limit: 2 })).map((e) => e.id)).toEqual(['evd-5']);
+  });
+
+  it('returns the tail when only offset is given', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await seedFive(mod);
+    expect((await mod.list({ offset: 3 })).map((e) => e.id)).toEqual(['evd-4', 'evd-5']);
+  });
+
+  it('clamps a negative offset to 0 and yields empty for a negative limit', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await seedFive(mod);
+    expect((await mod.list({ offset: -10, limit: 1 })).map((e) => e.id)).toEqual(['evd-1']);
+    expect(await mod.list({ limit: -1 })).toEqual([]);
+    expect(await mod.list({ limit: 0 })).toEqual([]);
+  });
+
+  it('returns empty when the offset is past the end', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    await seedFive(mod);
+    expect(await mod.list({ offset: 99 })).toEqual([]);
+  });
+
+  it('paginates within a tenant-label scope', async () => {
+    const { ctx } = makeCtx();
+    const mod = createEvidenceModule(ctx);
+    const acme = { tenant: 'acme', project: 'alpha' };
+    for (let i = 1; i <= 3; i += 1) {
+      await mod.attach(
+        { actorId: 'a', id: `evd-acme-${i}`, kind: 'document', summary: `a${i}` },
+        { labels: acme },
+      );
+      await mod.attach({ actorId: 'a', id: `evd-other-${i}`, kind: 'document', summary: `o${i}` });
+    }
+    const page = await mod.list({ labels: acme, offset: 1, limit: 1 });
+    expect(page.map((e) => e.id)).toEqual(['evd-acme-2']);
+  });
+});
+
 describe('EvidenceModule.get', () => {
   it('returns null for a missing id', async () => {
     const { ctx } = makeCtx();
