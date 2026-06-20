@@ -22,7 +22,7 @@ import type {
   VeritrailError,
   VeritrailModule,
 } from '@veritrail/core';
-import { DecisionSchema, err, validationError } from '@veritrail/core';
+import { DecisionSchema, err, notFoundError, ok, validationError } from '@veritrail/core';
 
 /** A decision returned by {@link DecisionMemoryModule.recall}, with its score. */
 export interface DecisionMatch {
@@ -68,6 +68,28 @@ export interface DecisionRecordOptions {
 export interface DecisionProjectionOptions {
   /** Restrict decisions to records carrying these exact ledger labels. */
   readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** The terminal outcome of a single related action, derived from its lifecycle events. */
+export type ActionOutcome = 'succeeded' | 'failed' | 'denied' | 'rolled_back' | 'pending';
+
+/** One related action and the outcome it reached. */
+export interface ActionResult {
+  readonly actionId: string;
+  readonly outcome: ActionOutcome;
+}
+
+/** A rolled-up verdict on whether a decision's actions worked out. */
+export type DecisionVerdict = 'effective' | 'failed' | 'mixed' | 'pending' | 'no_actions';
+
+/** The outcome of a decision: per-action results plus a rolled-up verdict. */
+export interface DecisionOutcomeReport {
+  readonly decisionId: string;
+  /** One entry per `relatedActionId`, in the decision's declared order. */
+  readonly actions: ActionResult[];
+  /** `no_actions` (none related) · `pending` (in flight, none bad) · `effective`
+   *  (all succeeded) · `failed` (bad, none succeeded) · `mixed` (some of each). */
+  readonly verdict: DecisionVerdict;
 }
 
 /** Default number of matches `recall` returns when no `limit` is supplied. */
@@ -170,6 +192,69 @@ export class DecisionMemoryModule implements VeritrailModule {
       if (decision.id === decisionId) found = decision; // keep the latest.
     }
     return found;
+  }
+
+  /**
+   * Report whether a decision's actions worked out ("did the decision work?").
+   *
+   * Looks up the decision (latest by id), then classifies each `relatedActionId`
+   * by replaying its action lifecycle events into a terminal {@link ActionOutcome}
+   * (`rolled_back` > `failed` > `denied` > `succeeded`, else `pending` when no
+   * terminal event is recorded yet), and rolls those into a {@link DecisionVerdict}.
+   * Returns `NOT_FOUND` when the decision does not exist (in scope). Tenant-scoped:
+   * only in-scope action events count, so an out-of-scope outcome reads as pending.
+   */
+  async outcomesFor(
+    decisionId: string,
+    opts?: DecisionProjectionOptions,
+  ): Promise<Result<DecisionOutcomeReport, VeritrailError>> {
+    const decision = await this.get(decisionId, opts);
+    if (!decision) {
+      return err(notFoundError(`decision not found: ${decisionId}`, { decisionId }));
+    }
+
+    const byActionId = await this.#actionOutcomes(opts);
+    const actions: ActionResult[] = decision.relatedActionIds.map((actionId) => ({
+      actionId,
+      outcome: byActionId.get(actionId) ?? 'pending',
+    }));
+
+    return ok({ decisionId, actions, verdict: verdictFor(actions) });
+  }
+
+  /**
+   * Map each action id to its terminal outcome by replaying action lifecycle
+   * events in ledger order. Later terminal events override earlier ones, so a
+   * `rolled_back` after an `executed` correctly reads as rolled back.
+   */
+  async #actionOutcomes(opts?: DecisionProjectionOptions): Promise<Map<string, ActionOutcome>> {
+    const records = await this.#ctx.ledger.query({
+      types: ['action.executed', 'action.failed', 'action.denied', 'action.rolled_back'],
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+    });
+    const byActionId = new Map<string, ActionOutcome>();
+    for (const record of records) {
+      const event = record.event;
+      let outcome: ActionOutcome;
+      switch (event.type) {
+        case 'action.executed':
+          outcome = 'succeeded';
+          break;
+        case 'action.failed':
+          outcome = 'failed';
+          break;
+        case 'action.denied':
+          outcome = 'denied';
+          break;
+        case 'action.rolled_back':
+          outcome = 'rolled_back';
+          break;
+        default:
+          continue;
+      }
+      byActionId.set(event.payload.actionId, outcome);
+    }
+    return byActionId;
   }
 
   /**
@@ -285,6 +370,21 @@ function extractDecision(record: LedgerRecord): Decision | null {
   const event = record.event as { type?: string; payload?: { decision?: Decision } };
   if (event.type !== 'decision.recorded') return null;
   return event.payload?.decision ?? null;
+}
+
+/** Roll per-action outcomes into a single decision verdict. */
+function verdictFor(actions: ReadonlyArray<ActionResult>): DecisionVerdict {
+  if (actions.length === 0) return 'no_actions';
+  let succeeded = 0;
+  let bad = 0;
+  let pending = 0;
+  for (const { outcome } of actions) {
+    if (outcome === 'succeeded') succeeded += 1;
+    else if (outcome === 'pending') pending += 1;
+    else bad += 1; // failed | denied | rolled_back
+  }
+  if (bad > 0) return succeeded > 0 ? 'mixed' : 'failed';
+  return pending > 0 ? 'pending' : 'effective';
 }
 
 /** The text a decision is matched against during {@link DecisionMemoryModule.recall}. */

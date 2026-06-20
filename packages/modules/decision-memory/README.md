@@ -64,11 +64,27 @@ class DecisionMemoryModule implements VeritrailModule {
     labels?: Readonly<Record<string, string>>;
   }): Promise<Decision[]>;
   get(decisionId: string, opts?: DecisionProjectionOptions): Promise<Decision | null>;
+  outcomesFor(
+    decisionId: string,
+    opts?: DecisionProjectionOptions,
+  ): Promise<Result<DecisionOutcomeReport, VeritrailError>>;
   recall(query: RecallQuery): Promise<DecisionMatch[]>;
 }
 
 function createDecisionMemoryModule(ctx: ModuleContext): DecisionMemoryModule;
 ```
+
+### Outcome linkage
+
+`outcomesFor(decisionId)` answers "did the decision work?". It looks up the
+decision (latest by id), then classifies each `relatedActionId` by replaying its
+action lifecycle events into a terminal outcome — `succeeded` | `failed` |
+`denied` | `rolled_back`, or `pending` when no terminal event is recorded yet
+(precedence on the latest event, so a `rolled_back` after an `executed` reads as
+rolled back) — and rolls those into a verdict: `no_actions`, `pending` (in flight,
+none bad), `effective` (all succeeded), `failed` (bad, none succeeded), or
+`mixed`. Returns `NOT_FOUND` when the decision does not exist. Tenant-scoped: only
+in-scope action events count, so an out-of-scope outcome reads as `pending`.
 
 ### Scoring
 
@@ -123,5 +139,3 @@ const hits = await memory.recall({ text: 'database consistency' });
 
 - **Vector / semantic recall via embeddings** — replace token overlap with
   embedding similarity so paraphrases and synonyms match.
-- **Outcome linkage** — join decisions to the `action.*` events they caused
-  (via `relatedActionIds`) to surface which decisions led to good/bad outcomes.
