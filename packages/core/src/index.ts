@@ -19,6 +19,9 @@ export * from './anchoring/index.js';
 // Append-boundary event redaction.
 export * from './redaction/index.js';
 
+// Field-level encryption and cryptographic erasure for PII.
+export * from './crypto/field-cipher.js';
+
 // Storage ports and adapters.
 export * from './storage/index.js';
 
