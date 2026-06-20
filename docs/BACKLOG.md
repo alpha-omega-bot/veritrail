@@ -68,9 +68,10 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       hash chain; `verify()` stays green) are implemented per ADR-0005. Remaining
       work: automated retention/erasure jobs on a schedule (mechanism exists;
       scheduling is operator-driven for now). (threat: I1)
-- [ ] **Backpressure & limits.** Server request body caps, fixed-window API rate
-      limiting, and write-route in-flight backpressure are implemented. Remaining
-      work: append batching for high-throughput ingest. (threat: D1)
+- [x] **Backpressure & limits.** Server request body caps, fixed-window API rate
+      limiting, write-route in-flight backpressure, and append batching
+      (`Ledger.appendMany` + optional `EventStore.appendBatch`, one fsync per
+      batch on the file store, per ADR-0006) are implemented. (threat: D1)
 - [x] **`DefaultIdGenerator` hardening.** Guard against collisions when the clock
       moves backward and on >65536 ids/ms. (review: core/low)
 
@@ -179,6 +180,19 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Completed the last P1 backpressure item: append batching
+  (ADR-0006). Added `Ledger.appendMany(inputs[])` — validates/redacts each input,
+  then under one mutex acquisition reads head once, chains the batch
+  (`record[i].prevHash = record[i-1].hash`), signs each, and persists via a new
+  optional `EventStore.appendBatch`. `ArrayBackedEventStore` validates the whole
+  contiguous run before committing; `FileEventStore` writes all lines with a
+  SINGLE fsync and rolls back on failure (atomic). Invalid inputs are reported by
+  position and excluded; the valid ones still commit as one run. Tests cover
+  chain integrity across a batch, mixed valid/invalid, signing, and file reopen.
+  **P1 (Milestone 1) is now functionally complete.** **Next:** Milestone 2 —
+  bring the five scaffold modules to GA, starting with rollback (smallest review
+  findings: durable compensation, `planForCorrelation` dropped-action semantics).
 
 - **2026-06-20** — Added P1 PII field-level encryption + cryptographic erasure
   (ADR-0005). New `@veritrail/core` `crypto/field-cipher`: a `FieldCipher` port,

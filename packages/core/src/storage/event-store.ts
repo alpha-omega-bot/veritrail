@@ -30,6 +30,12 @@ export interface EventQuery {
 export interface EventStore {
   /** Append a record, or fail with CONFLICT/STORAGE. */
   append(record: LedgerRecord): Promise<Result<LedgerRecord, VeritrailError>>;
+  /**
+   * Append a contiguous run of pre-chained records atomically (all-or-nothing),
+   * or fail with CONFLICT/STORAGE without committing any of them. Optional: when
+   * absent, callers fall back to sequential `append`. See ADR-0006.
+   */
+  appendBatch?(records: readonly LedgerRecord[]): Promise<Result<LedgerRecord[], VeritrailError>>;
   /** The last record, or null if the ledger is empty. */
   head(): Promise<LedgerRecord | null>;
   /** The record at a sequence number, or null. */

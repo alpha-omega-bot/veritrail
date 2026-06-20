@@ -42,6 +42,51 @@ export abstract class ArrayBackedEventStore implements EventStore {
     return ok(undefined);
   }
 
+  /**
+   * Validate a contiguous run: the first record chains to the current head and
+   * each subsequent record chains to its predecessor. Returns ok only when the
+   * whole batch is a valid extension of the chain.
+   */
+  protected checkBatch(records: readonly LedgerRecord[]): Result<void, VeritrailError> {
+    let { seq, prevHash } = this.expectedNext();
+    for (const record of records) {
+      if (record.seq !== seq) {
+        return err(
+          conflictError(`batch append out of sequence: expected seq ${seq}, got ${record.seq}`, {
+            expectedSeq: seq,
+            gotSeq: record.seq,
+          }),
+        );
+      }
+      if (record.prevHash !== prevHash) {
+        return err(
+          conflictError(`batch append prevHash mismatch at seq ${record.seq}`, {
+            expectedPrevHash: prevHash,
+            gotPrevHash: record.prevHash,
+          }),
+        );
+      }
+      seq = record.seq + 1;
+      prevHash = record.hash;
+    }
+    return ok(undefined);
+  }
+
+  /**
+   * Append a contiguous run atomically into the in-memory array. Subclasses with
+   * a durability concern override this to flush once for the whole batch; the
+   * default is the volatile commit. An empty batch is a no-op success.
+   */
+  async appendBatch(
+    records: readonly LedgerRecord[],
+  ): Promise<Result<LedgerRecord[], VeritrailError>> {
+    if (records.length === 0) return ok([]);
+    const check = this.checkBatch(records);
+    if (!check.ok) return check;
+    this.records.push(...records);
+    return ok([...records]);
+  }
+
   async head(): Promise<LedgerRecord | null> {
     return this.records.at(-1) ?? null;
   }
