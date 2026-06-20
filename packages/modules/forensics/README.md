@@ -18,6 +18,11 @@ demand, so it can never drift from the system of record.
 - **`causeChain(causationId)`** — walks the causal graph backwards from a record
   via each record's `event.causationId`, returning the chain oldest → newest.
   Missing links and cycles terminate the walk safely.
+- **`blastRadius(rootId)`** — the forward complement of `causeChain`: walks
+  `causationId` edges _downstream_ from a root event to find everything its
+  effects reached, returning a `BlastRadiusReport` (impacted seq-ordered
+  timeline, distinct affected actors and correlations, and failure / denial /
+  rollback tallies within the radius). Returns `NOT_FOUND` for an unknown root.
 
 ## Public API
 
@@ -42,12 +47,27 @@ interface IncidentReport {
   lastAt: number | null;
 }
 
+interface BlastRadiusReport {
+  rootId: string;
+  entries: TimelineEntry[]; // root + causally-downstream events, seq-ordered
+  actors: string[]; // distinct affected actors, first-seen order
+  correlations: string[]; // distinct correlations touched
+  impactedCount: number; // events in the radius excluding the root
+  failures: number;
+  denials: number;
+  rollbacks: number;
+}
+
 class ForensicsModule implements VeritrailModule {
   readonly info: { name: '@veritrail/forensics'; version: '0.1.0'; capability: 'forensics' };
   constructor(ctx: ModuleContext);
   incident(correlationId: string, opts?: ForensicsProjectionOptions): Promise<IncidentReport>;
   timeline(query: EventQuery): Promise<TimelineEntry[]>;
   causeChain(causationId: string, opts?: ForensicsProjectionOptions): Promise<LedgerRecord[]>;
+  blastRadius(
+    rootId: string,
+    opts?: ForensicsProjectionOptions,
+  ): Promise<Result<BlastRadiusReport, VeritrailError>>;
 }
 
 interface ForensicsProjectionOptions {
@@ -64,7 +84,9 @@ Passing `labels` restricts a projection to records carrying exactly those
 labels. `incident` then counts and timelines only the in-scope events of the
 correlation; `causeChain` walks the causal graph over in-scope records only, so
 a hop to an out-of-scope link truncates the chain at the tenant boundary rather
-than revealing cross-tenant causation. The server uses these options to enforce
+than revealing cross-tenant causation. `blastRadius` likewise only reaches
+in-scope downstream records, so the radius truncates at the boundary and a root
+outside the scope is `NOT_FOUND`. The server uses these options to enforce
 per-tenant API-key label scopes.
 
 ## Example
@@ -113,8 +135,6 @@ console.log(report.entries.map((e) => e.summary));
 
 - **Anomaly detection** — flag unusual event sequences, error spikes, and
   off-baseline actor behaviour within a correlation.
-- **Blast-radius** — compute the set of actions, vendors, and budgets affected by
-  a failure by following causal and correlation edges.
 - **Snapshot diffs** — reconstruct and diff pre/post state from
   `action.executed` results and rollback snapshot references.
 - **Root-cause ranking** — score and order candidate root-cause events in a

@@ -100,8 +100,8 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### forensics
 
-- [ ] Anomaly detection, blast-radius analysis, root-cause ranking, snapshot
-      diffs, shareable incident bundles.
+- [ ] Anomaly detection, root-cause ranking, snapshot diffs, shareable incident
+      bundles. (blast-radius analysis done — see below)
 
 ### evidence
 
@@ -199,6 +199,20 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-20** — Added forensics blast-radius analysis (M2 feature-depth). New
+  `blastRadius(rootId, opts?)` is the forward complement of `causeChain`: it walks
+  `causationId` edges _downstream_ (BFS with a visited guard) to find everything a
+  root event's effects reached, returning a `BlastRadiusReport` (impacted
+  seq-ordered timeline, distinct affected actors and correlations, impacted count,
+  and failure/denial/rollback tallies within the radius). Tenant-scoped like the
+  other forensic reads — out-of-scope downstream records are unreachable so the
+  radius truncates at the boundary, and a root outside the scope is `NOT_FOUND`.
+  Pure ledger projection, no new deps. Cleared the README blast-radius Phase 1
+  TODO. **Next:** remaining forensics depth (anomaly detection, root-cause
+  ranking, snapshot diffs, incident bundles), then the heavier dep/network M2
+  items (evidence external capture, decision-memory embeddings, rollback executor
+  adapters) which need deliberate scoping.
 
 - **2026-06-20** — Added vendor-risk alert thresholds (M2 feature-depth). The
   module now accepts `{ alertBand }`; when `recordSignal` raises a vendor's

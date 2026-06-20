@@ -11,5 +11,6 @@ export {
   createForensicsModule,
   type TimelineEntry,
   type IncidentReport,
+  type BlastRadiusReport,
 } from './engine.js';
 export { summarize } from './summarize.js';

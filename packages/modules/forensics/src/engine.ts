@@ -1,4 +1,14 @@
-import type { EventQuery, LedgerRecord, ModuleContext, VeritrailModule } from '@veritrail/core';
+import {
+  err,
+  notFoundError,
+  ok,
+  type EventQuery,
+  type LedgerRecord,
+  type ModuleContext,
+  type Result,
+  type VeritrailError,
+  type VeritrailModule,
+} from '@veritrail/core';
 
 import { summarize } from './summarize.js';
 
@@ -53,6 +63,30 @@ export interface IncidentReport {
   readonly firstAt: number | null;
   /** Timestamp of the latest event, or null when empty. */
   readonly lastAt: number | null;
+}
+
+/**
+ * The forward "blast radius" of a root event: everything its effects reached by
+ * following `causationId` edges downstream (the complement of
+ * {@link ForensicsModule.causeChain}, which walks upstream).
+ */
+export interface BlastRadiusReport {
+  /** The id of the root event the radius was computed from. */
+  readonly rootId: string;
+  /** Seq-ordered timeline of the root plus every causally-downstream event. */
+  readonly entries: TimelineEntry[];
+  /** Distinct actors touched within the radius, in first-seen order. */
+  readonly actors: string[];
+  /** Distinct correlation ids touched within the radius, in first-seen order. */
+  readonly correlations: string[];
+  /** Number of impacted events excluding the root. */
+  readonly impactedCount: number;
+  /** Count of `action.failed` events within the radius. */
+  readonly failures: number;
+  /** Count of `action.denied` events within the radius. */
+  readonly denials: number;
+  /** Count of `action.rolled_back` events within the radius. */
+  readonly rollbacks: number;
 }
 
 function toTimelineEntry(record: LedgerRecord): TimelineEntry {
@@ -193,6 +227,112 @@ export class ForensicsModule implements VeritrailModule {
     }
 
     return chain;
+  }
+
+  /**
+   * Compute the forward "blast radius" of a root event: the root plus every
+   * event causally downstream of it, reached by following `causationId` edges
+   * *forward* (a record `c` is downstream of `p` when `c.event.causationId ===
+   * p.id`). This is the complement of {@link causeChain}, which walks upstream.
+   *
+   * Returns a triage-shaped {@link BlastRadiusReport}: the seq-ordered impacted
+   * timeline, the distinct actors and correlations touched, and failure/denial/
+   * rollback counts within the radius. Traversal is breadth-first with a visited
+   * guard, so it is finite and acyclic. Out-of-scope records (per `opts.labels`)
+   * are not indexed, so the radius truncates at the tenant boundary. Returns
+   * `NOT_FOUND` when the root event does not exist (in scope).
+   */
+  async blastRadius(
+    rootId: string,
+    opts?: ForensicsProjectionOptions,
+  ): Promise<Result<BlastRadiusReport, VeritrailError>> {
+    const records = await this.#ctx.ledger.readAll();
+
+    const byId = new Map<string, LedgerRecord>();
+    const children = new Map<string, LedgerRecord[]>();
+    for (const record of records) {
+      if (!recordHasLabels(record, opts?.labels)) continue; // out-of-scope: invisible.
+      byId.set(record.id, record);
+      const parentId = record.event.causationId;
+      if (parentId !== undefined) {
+        const siblings = children.get(parentId);
+        if (siblings) siblings.push(record);
+        else children.set(parentId, [record]);
+      }
+    }
+
+    if (!byId.has(rootId)) {
+      return err(notFoundError(`event not found: ${rootId}`, { rootId }));
+    }
+
+    // BFS forward over causation edges; `enqueued` guards against cycles and
+    // re-processing a node reachable by multiple paths.
+    const reached: LedgerRecord[] = [];
+    const enqueued = new Set<string>([rootId]);
+    const queue: string[] = [rootId];
+    for (let head = 0; head < queue.length; head += 1) {
+      const id = queue[head]!;
+      const record = byId.get(id);
+      if (!record) continue;
+      reached.push(record);
+      for (const child of children.get(id) ?? []) {
+        if (!enqueued.has(child.id)) {
+          enqueued.add(child.id);
+          queue.push(child.id);
+        }
+      }
+    }
+
+    reached.sort((a, b) => a.seq - b.seq);
+
+    const entries: TimelineEntry[] = [];
+    const actors: string[] = [];
+    const seenActors = new Set<string>();
+    const correlations: string[] = [];
+    const seenCorrelations = new Set<string>();
+    let failures = 0;
+    let denials = 0;
+    let rollbacks = 0;
+
+    for (const record of reached) {
+      entries.push(toTimelineEntry(record));
+
+      const type = record.event.type;
+      if (type === 'action.failed') failures += 1;
+      else if (type === 'action.denied') denials += 1;
+      else if (type === 'action.rolled_back') rollbacks += 1;
+
+      const actorId = record.event.actorId;
+      if (!seenActors.has(actorId)) {
+        seenActors.add(actorId);
+        actors.push(actorId);
+      }
+
+      const correlationId = record.event.correlationId;
+      if (correlationId !== undefined && !seenCorrelations.has(correlationId)) {
+        seenCorrelations.add(correlationId);
+        correlations.push(correlationId);
+      }
+    }
+
+    this.#ctx.logger.debug('forensics.blastRadius', {
+      rootId,
+      impacted: entries.length - 1,
+      failures,
+      denials,
+      rollbacks,
+    });
+
+    return ok({
+      rootId,
+      entries,
+      actors,
+      correlations,
+      impactedCount: entries.length - 1,
+      failures,
+      denials,
+      rollbacks,
+    });
   }
 }
 
