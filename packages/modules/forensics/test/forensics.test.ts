@@ -326,6 +326,125 @@ describe('ForensicsModule tenant label scoping', () => {
   });
 });
 
+describe('ForensicsModule.blastRadius', () => {
+  it('projects the root plus everything causally downstream', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    // root -> a (failed), root -> b (other correlation), a -> c (rolled_back).
+    const root = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      payload: { text: 'root cause' },
+    });
+    const a = await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-2',
+      correlationId: 'run-1',
+      causationId: root.id,
+      payload: { actionId: 'act-a', error: 'boom' },
+    });
+    const b = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-3',
+      correlationId: 'run-2',
+      causationId: root.id,
+      payload: { text: 'downstream in another run' },
+    });
+    const c = await append(ledger, clock, {
+      type: 'action.rolled_back',
+      actorId: 'agent-1',
+      correlationId: 'run-1',
+      causationId: a.id,
+      payload: { actionId: 'act-a', reason: 'undo' },
+    });
+    // An unrelated event must NOT appear in the radius.
+    await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-9',
+      payload: { text: 'unrelated' },
+    });
+
+    const module = createForensicsModule(ctx);
+    const res = await module.blastRadius(root.id);
+    expect(isOk(res)).toBe(true);
+    const report = unwrap(res);
+
+    expect(report.entries.map((e) => e.seq)).toEqual([root.seq, a.seq, b.seq, c.seq]);
+    expect(report.impactedCount).toBe(3);
+    expect(report.actors).toEqual(['agent-1', 'agent-2', 'agent-3']);
+    expect(report.correlations).toEqual(['run-1', 'run-2']);
+    expect(report.failures).toBe(1);
+    expect(report.rollbacks).toBe(1);
+    expect(report.denials).toBe(0);
+
+    // From a midpoint, only its own descendants are in the radius.
+    const fromA = unwrap(await module.blastRadius(a.id));
+    expect(fromA.entries.map((e) => e.seq)).toEqual([a.seq, c.seq]);
+    expect(fromA.impactedCount).toBe(1);
+  });
+
+  it('returns a single-node radius for a leaf event', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    const leaf = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-1',
+      payload: { text: 'no downstream' },
+    });
+    const report = unwrap(await createForensicsModule(ctx).blastRadius(leaf.id));
+    expect(report.entries.map((e) => e.seq)).toEqual([leaf.seq]);
+    expect(report.impactedCount).toBe(0);
+  });
+
+  it('returns NOT_FOUND for an unknown root', async () => {
+    const { ctx } = makeCtx();
+    const res = await createForensicsModule(ctx).blastRadius('evt-missing');
+    expect(isOk(res)).toBe(false);
+    if (!isOk(res)) expect(res.error.code).toBe('NOT_FOUND');
+  });
+
+  it('truncates the radius at the tenant boundary', async () => {
+    const { ctx, ledger, clock } = makeCtx();
+    const acme = { tenant: 'acme', project: 'alpha' };
+    const other = { tenant: 'other', project: 'alpha' };
+    // acme root -> acme child, and acme root -> other-tenant child.
+    const root = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-1',
+      labels: acme,
+      payload: { text: 'root' },
+    });
+    const acmeChild = await append(ledger, clock, {
+      type: 'note',
+      actorId: 'agent-1',
+      labels: acme,
+      causationId: root.id,
+      payload: { text: 'acme child' },
+    });
+    const otherChild = await append(ledger, clock, {
+      type: 'action.failed',
+      actorId: 'agent-9',
+      labels: other,
+      causationId: root.id,
+      payload: { actionId: 'x', error: 'boom' },
+    });
+
+    const module = createForensicsModule(ctx);
+    // Scoped to acme: the other-tenant child is invisible, so its failure is not counted.
+    const scoped = unwrap(await module.blastRadius(root.id, { labels: acme }));
+    expect(scoped.entries.map((e) => e.seq)).toEqual([root.seq, acmeChild.seq]);
+    expect(scoped.failures).toBe(0);
+
+    // A root rooted in another tenant is NOT_FOUND under this scope (fail-closed).
+    const crossRoot = await module.blastRadius(otherChild.id, { labels: acme });
+    expect(isOk(crossRoot)).toBe(false);
+
+    // Unscoped sees the full fan-out including the failure.
+    const all = unwrap(await module.blastRadius(root.id));
+    expect(all.entries).toHaveLength(3);
+    expect(all.failures).toBe(1);
+  });
+});
+
 describe('summarize', () => {
   it('summarizes denials with reason', () => {
     const s = summarize({
