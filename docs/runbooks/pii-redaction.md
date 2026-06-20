@@ -60,10 +60,54 @@ After changing rules:
 3. Run `ledger.verify()` or the audit module integrity check.
 4. Publish a fresh external anchor if anchoring is enabled.
 
-## Remaining Controls
+## Field-Level Encryption and Cryptographic Erasure
 
-Append-boundary redaction is the first PII control. Field-level encryption,
-configurable retention, and cryptographic erasure are still separate Milestone 1
-work. Until those ship, protect the underlying event store with normal
-deployment controls such as disk encryption, restrictive file/database grants,
-backups access control, and log redaction in surrounding infrastructure.
+When a field must be **stored and usable for a time, then provably erased** (e.g.
+right-to-erasure requests), redaction's all-or-nothing blanking is not enough.
+`EncryptingEventRedactor` encrypts configured string fields at the same append
+boundary, so only ciphertext is hashed and signed. Erasure is then a matter of
+destroying the key — the ledger records are never mutated and `verify()` keeps
+passing. See [ADR-0005](../adr/0005-pii-field-encryption.md).
+
+```ts
+import { AesGcmKeyring, EncryptingEventRedactor, createFileLedger } from '@veritrail/core';
+
+// In production, implement FieldCipher over a KMS/HSM instead of an in-memory ring.
+const keyring = new AesGcmKeyring({ 'subject-42': process.env.SUBJECT_42_KEY! }, 'subject-42');
+
+const ledger = createFileLedger('/var/lib/veritrail/ledger.jsonl', {
+  redactor: new EncryptingEventRedactor(keyring, [
+    'payload.result.email',
+    'payload.result.notes.*',
+  ]),
+});
+```
+
+- Encrypted fields become opaque tokens (`enc.v1.<keyId>.…`); they cannot be
+  queried or aggregated by projections. Encrypt only what must be erasable, and
+  pick `keyId` per subject/tenant so one subject's data can be erased
+  independently.
+- Targeted fields must be strings (the token is a string). Encrypting a
+  non-string field leaves it unchanged; the post-redaction schema re-validation
+  is the backstop.
+- Authorized readers recover plaintext with `decryptEventFields(event, cipher,
+paths)`. A token whose key was erased surfaces as `[ERASED]`.
+
+### Erasing a Subject's Data
+
+1. Identify the `keyId` used for that subject's encrypted fields.
+2. Call `keyring.eraseKey(keyId)` (or schedule key deletion in your KMS).
+3. Confirm `decryptEventFields` now returns `[ERASED]` for those fields and that
+   `ledger.verify()` still reports `ok: true` — erasure must not break the chain.
+4. Re-publish an external anchor if anchoring is enabled; the head is unchanged,
+   but record that the erasure occurred in your operational log.
+
+Retention schedules that call `eraseKey` on a timetable are operator-driven for
+now; automated retention/erasure jobs are a later increment.
+
+## Remaining Deployment Controls
+
+Append-boundary redaction and encryption protect the record contents. Still
+protect the underlying event store with normal deployment controls: disk
+encryption, restrictive file/database grants, backup access control, and log
+redaction in surrounding infrastructure.

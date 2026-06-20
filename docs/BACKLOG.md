@@ -62,9 +62,12 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       module projection now has tenant semantics. Remaining work: broader policy
       composition (folded into the M4 policy-as-code item — richer language,
       simulation, versioned on the ledger). (threat: S1)
-- [ ] **PII handling.** Append-boundary field redaction hook and path redactor
-      are implemented. Remaining work: field-level encryption hooks and
-      configurable retention with cryptographic erasure. (threat: I1)
+- [ ] **PII handling.** Append-boundary field redaction (path redactor),
+      field-level encryption (`EncryptingEventRedactor` + `FieldCipher` /
+      `AesGcmKeyring`), and cryptographic erasure (key destruction preserves the
+      hash chain; `verify()` stays green) are implemented per ADR-0005. Remaining
+      work: automated retention/erasure jobs on a schedule (mechanism exists;
+      scheduling is operator-driven for now). (threat: I1)
 - [ ] **Backpressure & limits.** Server request body caps, fixed-window API rate
       limiting, and write-route in-flight backpressure are implemented. Remaining
       work: append batching for high-throughput ingest. (threat: D1)
@@ -177,7 +180,18 @@ tests) — they are done:
 
 ## Session log
 
-- **2026-06-20** — Completed P1 server-auth projection tenancy with Permissions
+- **2026-06-20** — Added P1 PII field-level encryption + cryptographic erasure
+  (ADR-0005). New `@veritrail/core` `crypto/field-cipher`: a `FieldCipher` port,
+  the `AesGcmKeyring` reference adapter (AES-256-GCM, named keys, `eraseKey`),
+  `EncryptingEventRedactor` (an `EventRedactor` that encrypts configured string
+  fields to `enc.v1.<keyId>.…` tokens at the append boundary, before
+  hashing/signing), and `decryptEventFields` for authorized reads. Because the
+  ciphertext is what gets hashed, destroying a key crypto-shreds the field while
+  the record bytes — and `verify()` — stay intact; a test asserts exactly that.
+  Updated the PII runbook and marked the backlog item; only scheduled
+  retention/erasure automation remains. **Next:** the last mechanical P1 item —
+  append batching for high-throughput ingest — then Milestone 2 scaffold-module
+  GA work (rollback findings first).
   (ADR-0004). Added an optional `tenant` to the core `PolicySchema`: a policy
   with no tenant is global, one with tenant labels applies only to in-scope
   principals. `listPolicies`/`evaluate`/`enforce` take an optional `scope`
