@@ -476,35 +476,37 @@ function registerRoutes(
   });
 
   // ---- vendor risk ------------------------------------------------------
-  app.post('/api/vendors', unscopedWriteRoute(['admin']), async (request, reply) =>
-    replyResult(reply, await vendorRisk.register(request.body)),
+  app.post('/api/vendors', writeRoute(['admin']), async (request, reply) =>
+    replyResult(
+      reply,
+      await vendorRisk.register(request.body, vendorRiskOptions(request.principal)),
+    ),
   );
 
-  app.get('/api/vendors', unscopedReadRoute(vendorRiskRead), async (_request, reply) =>
-    reply.send(await vendorRisk.listVendors()),
+  app.get('/api/vendors', readRoute(vendorRiskRead), async (request, reply) =>
+    reply.send(await vendorRisk.listVendors(vendorRiskOptions(request.principal))),
   );
 
-  app.post('/api/vendors/signals', unscopedWriteRoute(['ingest']), async (request, reply) =>
-    replyResult(reply, await vendorRisk.recordSignal(request.body)),
+  app.post('/api/vendors/signals', writeRoute(['ingest']), async (request, reply) =>
+    replyResult(
+      reply,
+      await vendorRisk.recordSignal(request.body, vendorRiskOptions(request.principal)),
+    ),
   );
 
-  app.get('/api/vendors/:id/signals', unscopedReadRoute(vendorRiskRead), async (request, reply) => {
+  app.get('/api/vendors/:id/signals', readRoute(vendorRiskRead), async (request, reply) => {
     const id = String((request.params as Record<string, unknown>)['id']);
-    return reply.send(await vendorRisk.signalsFor(id));
+    return reply.send(await vendorRisk.signalsFor(id, vendorRiskOptions(request.principal)));
   });
 
-  app.get('/api/vendor-risk/assess', unscopedReadRoute(vendorRiskRead), async (_request, reply) =>
-    reply.send(await vendorRisk.assess()),
+  app.get('/api/vendor-risk/assess', readRoute(vendorRiskRead), async (request, reply) =>
+    reply.send(await vendorRisk.assess(vendorRiskOptions(request.principal))),
   );
 
-  app.get(
-    '/api/vendor-risk/:id/score',
-    unscopedReadRoute(vendorRiskRead),
-    async (request, reply) => {
-      const id = String((request.params as Record<string, unknown>)['id']);
-      return replyResult(reply, await vendorRisk.score(id));
-    },
-  );
+  app.get('/api/vendor-risk/:id/score', readRoute(vendorRiskRead), async (request, reply) => {
+    const id = String((request.params as Record<string, unknown>)['id']);
+    return replyResult(reply, await vendorRisk.score(id, vendorRiskOptions(request.principal)));
+  });
 
   // ---- forensics --------------------------------------------------------
   app.get('/api/forensics/incident', unscopedReadRoute(forensicsRead), async (request, reply) => {
@@ -694,6 +696,13 @@ function decisionProjectionOptions(
 }
 
 function evidenceOptions(
+  principal: ApiKeyPrincipal | undefined,
+): { labels?: Readonly<Record<string, string>> } | undefined {
+  const labelScope = principal?.labelScope;
+  return labelScope === undefined ? undefined : { labels: labelScope };
+}
+
+function vendorRiskOptions(
   principal: ApiKeyPrincipal | undefined,
 ): { labels?: Readonly<Record<string, string>> } | undefined {
   const labelScope = principal?.labelScope;

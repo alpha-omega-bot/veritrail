@@ -54,12 +54,12 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       with static JWKS plus discovery/JWKS refresh, label-scoped raw ledger
       reads/writes, spend charges and spend read projections, signed
       administrative mutation requests, ledger-recorded administrative
-      policy/budget changes, Decision Memory writes/read projections, and
-      Evidence writes/read projections, and fail-closed scoped access for
-      unpartitioned module projections are implemented. Remaining work:
-      tenant-filtered
-      projection semantics for the remaining modules and broader policy
-      composition. (threat: S1)
+      policy/budget changes, Decision Memory writes/read projections, Evidence
+      writes/read projections, Vendor Risk writes/read projections, and
+      fail-closed scoped access for unpartitioned module projections are
+      implemented. Remaining work: tenant-filtered projection semantics for the
+      remaining modules (forensics incident/cause, rollback, permissions) and
+      broader policy composition. (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -176,7 +176,21 @@ tests) — they are done:
 ## Session log
 
 - **2026-06-20** — Continued P1 server auth projection-tenancy semantics with
-  Evidence. Scoped `/api/evidence` writes now stamp the principal's label scope
+  Vendor Risk. Added `VendorRiskRecordOptions`/`VendorRiskProjectionOptions` to
+  the vendor-risk module so writes can stamp ledger labels and reads filter by
+  exact labels. Scoped `/api/vendors` and `/api/vendors/signals` writes now stamp
+  the principal's label scope onto `vendor.registered` / `vendor.signal` facts,
+  while the vendor inventory, signal, assessment, and score reads project only
+  vendor facts carrying that complete scope. Closed an incoherence in the
+  in-flight draft: the `/api/vendors` list read and the `/api/vendors` register
+  write were left unscoped, so a label-scoped reader could never see a vendor
+  (unlabeled facts never match a scoped query); both are now scoped consistently.
+  Added module-level and HTTP-level scoping tests and updated the stale
+  "denies unpartitioned projections" test. Forensics incident/cause-chain and
+  rollback remain fail-closed for scoped principals until their tenant semantics
+  are explicit. **Next:** tenant-filtered projection semantics for forensics
+  incident/cause and rollback, or continue P1 with PII encryption/retention or
+  append batching.
   onto `evidence.attached` facts, while scoped evidence list, trace, and content
   verification project only evidence carrying that complete scope. Trace edges
   to out-of-scope upstream ids remain visible as dangling provenance references,

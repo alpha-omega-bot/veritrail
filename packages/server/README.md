@@ -77,12 +77,15 @@ stamp the configured labels onto the recorded decision fact, while
 `/api/decisions` and `/api/decisions/recall` only project decisions carrying
 those labels. Scoped writes to `/api/evidence` stamp the same labels onto
 `evidence.attached` facts, while evidence list, trace, and content verification
-only project evidence carrying those labels.
+only project evidence carrying those labels. Scoped writes to `/api/vendors` and
+`/api/vendors/signals` stamp the configured labels onto `vendor.registered` /
+`vendor.signal` facts, while the vendor inventory, signal, assessment, and score
+reads only project vendor facts carrying those labels.
 
 Routes that read or mutate server-held configuration, whole-ledger integrity, or
 module projections without tenant-filtered semantics require an unscoped key.
 This includes permissions policy routes, audit summary/verify/export, spend
-budget mutation, vendor risk, forensics incident/cause-chain, and rollback
+budget mutation, forensics incident/cause-chain, and rollback
 planning/execution. Tenant-scoped projections should be added route by route once
 each module has an explicit tenant model.
 
