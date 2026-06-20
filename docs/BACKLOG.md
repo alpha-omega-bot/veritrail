@@ -56,10 +56,11 @@ lower-severity issues that were filed rather than fixed in the bootstrap).
       administrative mutation requests, ledger-recorded administrative
       policy/budget changes, Decision Memory writes/read projections, Evidence
       writes/read projections, Vendor Risk writes/read projections, Forensics
-      incident/cause-chain read projections, and fail-closed scoped access for
-      unpartitioned module projections are implemented. Remaining work:
-      tenant-filtered projection semantics for the remaining modules (rollback,
-      permissions) and broader policy composition. (threat: S1)
+      incident/cause-chain read projections, Rollback plan reads + compensating
+      writes, and fail-closed scoped access for unpartitioned module projections
+      are implemented. Remaining work: tenant-filtered projection semantics for
+      the remaining module (permissions) and broader policy composition.
+      (threat: S1)
 - [ ] **PII handling.** Append-boundary field redaction hook and path redactor
       are implemented. Remaining work: field-level encryption hooks and
       configurable retention with cryptographic erasure. (threat: I1)
@@ -176,6 +177,17 @@ tests) — they are done:
 ## Session log
 
 - **2026-06-20** — Continued P1 server auth projection-tenancy semantics with
+  Rollback. Added `RollbackProjectionOptions` / `RollbackRecordOptions` to the
+  module: `planForAction` and `planForCorrelation` filter to in-scope records
+  (planning another tenant's action returns NOT_FOUND — fail-closed), and
+  `execute` stamps the principal's labels onto appended `action.rolled_back`
+  facts. Wired `/api/rollback/plan/action/:actionId`,
+  `/api/rollback/plan/correlation/:correlationId`, and `/api/rollback/execute`
+  from unscoped to scoped, updated the stale "denies unpartitioned projections"
+  test, and added module + HTTP scoping tests. Permissions is now the only module
+  still fail-closed for scoped principals. **Next:** permissions tenant scoping
+  (closing the P1 server-auth item), or move to P1 PII encryption/retention or
+  append batching; then Milestone 2 scaffold-module GA work.
   Forensics. Added `ForensicsProjectionOptions` to the module: `incident` now
   filters the correlation's events by exact labels (counts/timeline reflect only
   in-scope events), and `causeChain` builds its id-index from in-scope records

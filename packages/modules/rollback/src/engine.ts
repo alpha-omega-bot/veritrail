@@ -67,6 +67,27 @@ export type CompensationExecutor = (
 /** Default executor: a no-op that reports success (records intent only). */
 const defaultExecutor: CompensationExecutor = async () => ({ ok: true });
 
+/** Optional ledger envelope values for compensating writes. */
+export interface RollbackRecordOptions {
+  /** Labels to write onto appended `action.rolled_back` event envelopes. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Optional projection filters for rollback plan reads. */
+export interface RollbackProjectionOptions {
+  /** Restrict planning to records carrying these exact ledger labels. */
+  readonly labels?: Readonly<Record<string, string>>;
+}
+
+/** Does a record carry every one of the given exact labels? */
+function recordHasLabels(
+  record: LedgerRecord,
+  labels: Readonly<Record<string, string>> | undefined,
+): boolean {
+  if (labels === undefined) return true;
+  return Object.entries(labels).every(([key, value]) => record.event.labels[key] === value);
+}
+
 /** Extract the {@link Action} from an `action.proposed` record, if present. */
 function proposedAction(record: LedgerRecord): Action | undefined {
   if (record.event.type !== 'action.proposed') return undefined;
@@ -126,12 +147,18 @@ export class RollbackModule {
    * single step; a non-reversible one (or strategy `none`) is reported in
    * `unreversible`. Returns NOT_FOUND when the action was never proposed.
    */
-  async planForAction(actionId: string): Promise<Result<RollbackPlan, VeritrailError>> {
+  async planForAction(
+    actionId: string,
+    opts?: RollbackProjectionOptions,
+  ): Promise<Result<RollbackPlan, VeritrailError>> {
     const records = await this.#ctx.ledger.readAll();
 
     let action: Action | undefined;
     let executed = false;
     for (const record of records) {
+      // Out-of-scope records are invisible, so planning another tenant's action
+      // returns NOT_FOUND rather than leaking its reversal descriptor.
+      if (!recordHasLabels(record, opts?.labels)) continue;
       const proposed = proposedAction(record);
       if (proposed !== undefined && proposed.id === actionId) {
         action = proposed;
@@ -165,8 +192,14 @@ export class RollbackModule {
    * Steps are emitted in REVERSE chronological (descending `seq`) order so that
    * effects are undone last-in-first-out — the safe order for dependent work.
    */
-  async planForCorrelation(correlationId: string): Promise<RollbackPlan> {
-    const records = await this.#ctx.ledger.query({ correlationId });
+  async planForCorrelation(
+    correlationId: string,
+    opts?: RollbackProjectionOptions,
+  ): Promise<RollbackPlan> {
+    const records = await this.#ctx.ledger.query({
+      correlationId,
+      ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
+    });
 
     const proposedById = new Map<string, Action>();
     const executedSeq = new Map<string, number>();
@@ -208,6 +241,7 @@ export class RollbackModule {
   async execute(
     plan: RollbackPlan,
     executor: CompensationExecutor = defaultExecutor,
+    opts?: RollbackRecordOptions,
   ): Promise<RollbackResult> {
     const outcomes: RollbackOutcome[] = [];
 
@@ -231,6 +265,7 @@ export class RollbackModule {
       const appended = await this.#ctx.ledger.append({
         type: 'action.rolled_back',
         actorId: this.info.name,
+        ...(opts?.labels !== undefined ? { labels: opts.labels } : {}),
         payload: {
           actionId: step.actionId,
           reason,

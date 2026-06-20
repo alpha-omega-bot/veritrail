@@ -1318,6 +1318,154 @@ describe('Veritrail HTTP server auth', () => {
     }
   });
 
+  it('enforces label scopes on rollback plan reads and compensating writes', async () => {
+    const scopedApp = await buildServer({
+      logger: false,
+      auth: {
+        apiKeys: [
+          {
+            id: 'admin',
+            actorId: 'admin-1',
+            secret: 'rollback-admin-secret-0001',
+            roles: ['admin'],
+          },
+          {
+            id: 'tenant-rollback-operator',
+            actorId: 'tenant-operator',
+            secret: 'rollback-acme-operator-secret-0001',
+            roles: ['operator', 'ingest'],
+            scopes: ['rollback:read', 'rollback:execute'],
+            labelScope: { tenant: 'acme', project: 'alpha' },
+          },
+          {
+            id: 'operator',
+            actorId: 'operator-1',
+            secret: 'rollback-operator-secret-0001',
+            roles: ['operator'],
+            scopes: ['rollback:read'],
+          },
+        ],
+      },
+    });
+    try {
+      const adminHeaders = { authorization: 'Bearer rollback-admin-secret-0001', ...json };
+      const reversible = (id: string) => ({
+        id,
+        actorId: 'agent-1',
+        type: 'http.request',
+        target: 'https://api.example.com/orders',
+        params: { method: 'POST' },
+        reversible: true,
+        reversal: {
+          strategy: 'compensate',
+          inverse: { type: 'http.request', target: 'https://api.example.com/cancel', params: {} },
+        },
+        status: 'proposed',
+        context: {},
+      });
+      const seed = async (
+        actionId: string,
+        labels: Record<string, string>,
+        correlationId: string,
+      ): Promise<void> => {
+        const propose = await scopedApp.inject({
+          method: 'POST',
+          url: '/api/events',
+          headers: adminHeaders,
+          payload: body({
+            type: 'action.proposed',
+            actorId: 'agent-1',
+            correlationId,
+            labels,
+            payload: { action: reversible(actionId) },
+          }),
+        });
+        expect(propose.statusCode).toBe(201);
+        const exec = await scopedApp.inject({
+          method: 'POST',
+          url: '/api/events',
+          headers: adminHeaders,
+          payload: body({
+            type: 'action.executed',
+            actorId: 'agent-1',
+            correlationId,
+            labels,
+            payload: { actionId, outcome: 'success' },
+          }),
+        });
+        expect(exec.statusCode).toBe(201);
+      };
+
+      await seed('act-acme', { tenant: 'acme', project: 'alpha' }, 'run-acme');
+      await seed('act-other', { tenant: 'other', project: 'alpha' }, 'run-other');
+
+      const reader = { authorization: 'Bearer rollback-acme-operator-secret-0001' };
+
+      // Planning an in-scope action yields a step; a cross-tenant action is
+      // NOT_FOUND (its records are invisible to the scoped key).
+      const scopedPlan = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/rollback/plan/action/act-acme',
+        headers: reader,
+      });
+      expect(scopedPlan.statusCode).toBe(200);
+      expect((scopedPlan.json() as { steps: unknown[] }).steps).toHaveLength(1);
+
+      const crossPlan = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/rollback/plan/action/act-other',
+        headers: reader,
+      });
+      expect(crossPlan.statusCode).toBe(404);
+
+      // A correlation plan only covers in-scope actions.
+      await seed('act-acme-2', { tenant: 'acme', project: 'alpha' }, 'run-mixed');
+      await seed('act-other-2', { tenant: 'other', project: 'alpha' }, 'run-mixed');
+      const corrPlan = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/rollback/plan/correlation/run-mixed',
+        headers: reader,
+      });
+      expect(corrPlan.statusCode).toBe(200);
+      expect(
+        (corrPlan.json() as { steps: Array<{ actionId: string }> }).steps.map((s) => s.actionId),
+      ).toEqual(['act-acme-2']);
+
+      // Executing stamps the principal's labels onto the action.rolled_back fact.
+      const plan = scopedPlan.json();
+      const execute = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/rollback/execute',
+        headers: { ...reader, ...json },
+        payload: body({ plan }),
+      });
+      expect(execute.statusCode).toBe(200);
+      expect((execute.json() as { outcomes: Array<{ status: string }> }).outcomes[0]?.status).toBe(
+        'rolled_back',
+      );
+
+      const rolledBack = await scopedApp.inject({
+        method: 'GET',
+        url: '/api/audit/events?type=action.rolled_back',
+        headers: { authorization: 'Bearer rollback-admin-secret-0001' },
+      });
+      const records = rolledBack.json() as Array<{ event: { labels: Record<string, string> } }>;
+      expect(records).toHaveLength(1);
+      expect(records[0]?.event.labels).toEqual({ tenant: 'acme', project: 'alpha' });
+
+      // An unscoped operator can plan the other tenant's action.
+      const unscopedCross = await scopedApp.inject({
+        method: 'POST',
+        url: '/api/rollback/plan/action/act-other',
+        headers: { authorization: 'Bearer rollback-operator-secret-0001' },
+      });
+      expect(unscopedCross.statusCode).toBe(200);
+      expect((unscopedCross.json() as { steps: unknown[] }).steps).toHaveLength(1);
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('denies label-scoped principals on unpartitioned module projections', async () => {
     const scopedApp = await buildServer({
       logger: false,
@@ -1402,9 +1550,6 @@ describe('Veritrail HTTP server auth', () => {
         ['GET', '/api/audit/verify'],
         ['GET', '/api/audit/export'],
         ['POST', '/api/permissions/evaluate'],
-        ['POST', '/api/rollback/plan/action/action-1'],
-        ['GET', '/api/rollback/plan/correlation/run-1'],
-        ['POST', '/api/rollback/execute'],
       ] as const;
 
       for (const [method, url] of deniedReadRoutes) {

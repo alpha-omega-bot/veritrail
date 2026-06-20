@@ -278,3 +278,92 @@ describe('execute', () => {
     ]);
   });
 });
+
+describe('tenant label scoping', () => {
+  const acme = { tenant: 'acme', project: 'alpha' };
+  const other = { tenant: 'other', project: 'alpha' };
+
+  async function proposeScoped(
+    ctx: ModuleContext,
+    action: Action,
+    labels: Record<string, string>,
+    correlationId?: string,
+  ): Promise<void> {
+    const r = await ctx.ledger.append({
+      type: 'action.proposed',
+      actorId: action.actorId,
+      labels,
+      ...(correlationId !== undefined ? { correlationId } : {}),
+      payload: { action },
+    });
+    expect(r.ok).toBe(true);
+  }
+
+  async function executeScoped(
+    ctx: ModuleContext,
+    actionId: string,
+    labels: Record<string, string>,
+    correlationId?: string,
+  ): Promise<void> {
+    const r = await ctx.ledger.append({
+      type: 'action.executed',
+      actorId: 'agent-1',
+      labels,
+      ...(correlationId !== undefined ? { correlationId } : {}),
+      payload: { actionId, outcome: 'success' },
+    });
+    expect(r.ok).toBe(true);
+  }
+
+  it('returns NOT_FOUND when planning another tenant action under a scope', async () => {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    await proposeScoped(ctx, reversibleAction('act-other'), other);
+    await executeScoped(ctx, 'act-other', other);
+
+    const crossScope = await mod.planForAction('act-other', { labels: acme });
+    expect(crossScope.ok).toBe(false);
+    if (crossScope.ok) return;
+    expect(crossScope.error.code).toBe('NOT_FOUND');
+
+    // The same action is planned normally without a scope.
+    const unscoped = await mod.planForAction('act-other');
+    expect(unscoped.ok).toBe(true);
+    if (unscoped.ok) expect(unscoped.value.steps).toHaveLength(1);
+  });
+
+  it('plans only in-scope actions of a correlation', async () => {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    const corr = 'run-mixed';
+    await proposeScoped(ctx, reversibleAction('a'), acme, corr);
+    await executeScoped(ctx, 'a', acme, corr);
+    await proposeScoped(ctx, reversibleAction('b'), other, corr);
+    await executeScoped(ctx, 'b', other, corr);
+
+    const scoped = await mod.planForCorrelation(corr, { labels: acme });
+    expect(scoped.steps.map((s) => s.actionId)).toEqual(['a']);
+
+    const all = await mod.planForCorrelation(corr);
+    expect(all.steps.map((s) => s.actionId).sort()).toEqual(['a', 'b']);
+  });
+
+  it('stamps the configured labels onto appended action.rolled_back facts', async () => {
+    const ctx = makeContext();
+    const mod = createRollbackModule(ctx);
+    await proposeScoped(ctx, reversibleAction('act-1'), acme);
+    await executeScoped(ctx, 'act-1', acme);
+    const plan = await mod.planForAction('act-1', { labels: acme });
+    if (!plan.ok) throw new Error('expected plan');
+
+    const result = await mod.execute(plan.value, undefined, { labels: acme });
+    expect(result.outcomes[0]?.status).toBe('rolled_back');
+
+    const rolledBack = await ctx.ledger.query({ types: ['action.rolled_back'] });
+    expect(rolledBack).toHaveLength(1);
+    expect(rolledBack[0]?.event.labels).toEqual(acme);
+    // The compensating fact is visible to the same tenant scope.
+    const scopedView = await ctx.ledger.query({ types: ['action.rolled_back'], labels: acme });
+    expect(scopedView).toHaveLength(1);
+  });
+});
