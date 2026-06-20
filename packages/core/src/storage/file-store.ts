@@ -99,6 +99,29 @@ async function truncateDurably(path: string, length: number): Promise<void> {
   });
 }
 
+/**
+ * Append a payload of one or more serialized lines with a SINGLE fsync, rolling
+ * the file back to its previous length if the write or flush fails — so a batch
+ * is durable in full or not at all (ADR-0006).
+ */
+async function appendBatchDurably(path: string, payload: string): Promise<void> {
+  const previousLength = (await stat(path)).size;
+  try {
+    await withHandle(path, 'a', async (handle) => {
+      await handle.writeFile(payload, 'utf8');
+      await handle.sync();
+    });
+  } catch (cause) {
+    try {
+      await truncateDurably(path, previousLength);
+    } catch {
+      // Preserve the original failure; the in-memory head is not advanced unless
+      // the durable batch append fully succeeds.
+    }
+    throw cause;
+  }
+}
+
 function parseRecords(
   content: string,
   path: string,
@@ -193,6 +216,22 @@ export class FileEventStore extends ArrayBackedEventStore {
     }
     this.records.push(record);
     return ok(record);
+  }
+
+  override async appendBatch(
+    records: readonly LedgerRecord[],
+  ): Promise<Result<LedgerRecord[], VeritrailError>> {
+    if (records.length === 0) return ok([]);
+    const check = this.checkBatch(records);
+    if (!check.ok) return check;
+    const payload = records.map((record) => `${JSON.stringify(record)}\n`).join('');
+    try {
+      await appendBatchDurably(this.#path, payload);
+    } catch (cause) {
+      return { ok: false, error: storageError(`failed to append batch to ${this.#path}`, cause) };
+    }
+    this.records.push(...records);
+    return ok([...records]);
   }
 
   /** The file this store persists to. */

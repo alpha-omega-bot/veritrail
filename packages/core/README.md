@@ -62,8 +62,14 @@ console.log(report.ok, report.head); // true, <chain head hash>
 - **Anchoring**: a fully-rewritten _unsigned_ chain is internally consistent;
   publish periodic `AnchorRecord` checkpoints through an `AnchorStore` and verify
   them with `verifyLedgerAgainstLatestAnchor()` to detect wholesale rewrites.
-- **Append-boundary redaction**: provide an `EventRedactor` to transform a
-  validated event before hashing, signing, and persistence. `PathEventRedactor`
-  supports dot paths and `*` wildcards for common JSON payload fields.
+- **Append-boundary redaction & encryption**: provide an `EventRedactor` to
+  transform a validated event before hashing, signing, and persistence.
+  `PathEventRedactor` blanks fields (dot paths and `*` wildcards);
+  `EncryptingEventRedactor` (with a `FieldCipher` / `AesGcmKeyring`) encrypts
+  fields so PII can be cryptographically erased by destroying the key without
+  breaking the chain.
+- **Batched ingest**: `Ledger.appendMany(inputs)` commits a contiguous run in one
+  store round-trip (a single fsync on `FileEventStore`) while preserving the
+  linear, gap-free chain. Stores may implement the optional `EventStore.appendBatch`.
 
 See [`docs/concepts/ledger.md`](../../docs/concepts/ledger.md) for the full model.
