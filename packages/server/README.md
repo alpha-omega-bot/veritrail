@@ -72,14 +72,17 @@ query before `limit` is applied; `/api/audit/events/:seq` hides records outside
 the scope. Spend charges from scoped ingest keys must also carry the configured
 labels. Scoped reads on `/api/spend/budgets` and `/api/spend/status` return only
 label budgets inside the key's label scope, and status only counts charge records
-that carry the complete configured label scope.
+that carry the complete configured label scope. Scoped writes to `/api/decisions`
+stamp the configured labels onto the recorded decision fact, while
+`/api/decisions` and `/api/decisions/recall` only project decisions carrying
+those labels.
 
 Routes that read or mutate server-held configuration, whole-ledger integrity, or
 module projections without tenant-filtered semantics require an unscoped key.
 This includes permissions policy routes, audit summary/verify/export, spend
-budget mutation, decision memory, evidence, vendor risk, forensics
-incident/cause-chain, and rollback planning/execution. Tenant-scoped projections
-should be added route by route once each module has an explicit tenant model.
+budget mutation, evidence, vendor risk, forensics incident/cause-chain, and
+rollback planning/execution. Tenant-scoped projections should be added route by
+route once each module has an explicit tenant model.
 
 ```ts
 const app = await buildServer({

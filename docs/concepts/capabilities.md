@@ -268,17 +268,27 @@ Recording appends a fact; reads are projections. No parallel store.
 
 ```ts
 class DecisionMemoryModule {
-  record(input: unknown): Promise<Result<LedgerRecord, VeritrailError>>; // mints `dec…` id
-  list(opts?: { actorId?: string; limit?: number }): Promise<Decision[]>; // newest first
-  get(decisionId: string): Promise<Decision | null>; // latest by id
+  record(
+    input: unknown,
+    opts?: { labels?: Record<string, string> },
+  ): Promise<Result<LedgerRecord, VeritrailError>>; // mints `dec…` id
+  list(opts?: {
+    actorId?: string;
+    limit?: number;
+    labels?: Record<string, string>;
+  }): Promise<Decision[]>; // newest first
+  get(decisionId: string, opts?: { labels?: Record<string, string> }): Promise<Decision | null>; // latest by id
   recall(query: RecallQuery): Promise<DecisionMatch[]>;
 }
 function createDecisionMemoryModule(ctx: ModuleContext): DecisionMemoryModule;
 ```
 
-`RecallQuery` = `{ text?, actorId?, limit? }` (default limit 10).
+`RecallQuery` = `{ text?, actorId?, limit?, labels? }` (default limit 10).
 `DecisionMatch` = `{ decision, score ∈ [0,1] }`. The decision's own `actorId`
-becomes the ledger envelope actor, so decisions are queryable by actor.
+becomes the ledger envelope actor, so decisions are queryable by actor. Optional
+record labels are written to the ledger envelope; optional read labels restrict
+`list`, `get`, and `recall` to `decision.recorded` records carrying every
+requested key/value pair.
 
 **Recall** is a deliberately simple lexical ranker: it tokenizes the query
 (lowercase, split on non-alphanumerics), scores each decision as
