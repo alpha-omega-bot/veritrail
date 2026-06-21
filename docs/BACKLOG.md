@@ -205,6 +205,21 @@ tests) — they are done:
 
 ## Session log
 
+- **2026-06-21** — Declared **Incident Forensics** and **Decision Memory** GA
+  (user-approved maturity flip). Updated every maturity statement consistently:
+  `README.md` capability table (3 GA/5 scaffold → 5 GA/3 scaffold), the
+  `docs/concepts/capabilities.md` legend + both section headers, `ROADMAP.md`
+  Milestone 2 (now 🚧 with accurate per-module status — forensics + decision-memory
+  ✅ GA, rollback/evidence/vendor-risk 🚧 advanced-baseline), and `AGENTS.md`
+  maturity prose + repo map. GA framed honestly as **stable contract + GA-comparable
+  tests**, not "nothing left": each module's "Phase 1 TODO" was _renamed_
+  "Post-GA enhancements" (items kept visible, not deleted) — forensics: anomaly
+  detection + snapshot diffs; decision-memory: a deployment-supplied embedding
+  adapter. ROADMAP M0 line left as historical (they _were_ scaffolds at v0.1).
+  Docs-only. **Remaining scaffolds:** rollback, evidence, vendor-risk. Everything
+  left needs a user call (adapter packages / vendor SLA schema choice / their GA
+  flips once earned).
+
 - **2026-06-20** — Added decision-memory semantic recall via an injectable
   `EmbeddingProvider` port (M2 feature-depth; user picked this dependency item).
   Construct with `{ embeddingProvider }` and `recall` ranks by cosine similarity

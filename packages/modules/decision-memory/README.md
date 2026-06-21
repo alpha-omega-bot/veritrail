@@ -8,8 +8,9 @@ tamper-evident, hash-chained ledger in `@veritrail/core`. Recording a decision
 appends a `decision.recorded` event; reads (`list`, `get`, `recall`) replay
 those events. There is **no separate store**.
 
-> Status: **scaffold baseline.** Recall is a simple lexical (token-overlap)
-> ranker. See the Phase 1 TODO below.
+> Status: **GA.** Recall ranks by lexical token overlap by default, with opt-in
+> recency weighting and opt-in semantic (embedding) ranking via an injectable
+> `EmbeddingProvider`. See Post-GA enhancements below.
 
 ## What it does
 
@@ -166,7 +167,10 @@ const hits = await memory.recall({ text: 'database consistency' });
 // hits[0].decision.summary === 'Choose a primary database'
 ```
 
-## Phase 1 TODO
+## Post-GA enhancements
+
+Recording, recall (lexical + recency + semantic), and outcome linkage are GA.
+Still planned:
 
 - **Vector / semantic recall via embeddings** — the `EmbeddingProvider` port and
   cosine-similarity ranking are implemented (with a dependency-free

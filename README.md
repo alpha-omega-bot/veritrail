@@ -52,9 +52,9 @@ they are **engines and projections over that one ledger.**
 | 2   | **Permissions**        | Deny-by-default policy engine that gates agent actions before they run.    | **GA**      |
 | 3   | **Spend Guard**        | Budget tracking with hard-stop enforcement over cost events.               | **GA**      |
 | 4   | **Rollback**           | Build & execute compensating plans to reverse recorded reversible actions. | Scaffold    |
-| 5   | **Incident Forensics** | Reconstruct timelines and causal chains for an incident.                   | Scaffold    |
+| 5   | **Incident Forensics** | Reconstruct timelines and causal chains for an incident.                   | **GA**      |
 | 6   | **Evidence Tracing**   | Content-addressed provenance graph linking decisions → evidence → sources. | Scaffold    |
-| 7   | **Decision Memory**    | Record and recall agent decisions and their rationale.                     | Scaffold    |
+| 7   | **Decision Memory**    | Record and recall agent decisions and their rationale.                     | **GA**      |
 | 8   | **Vendor Risk**        | Inventory third parties and score time-decayed risk signals.               | Scaffold    |
 
 > **GA** capabilities are fully implemented and tested. **Scaffold** capabilities
