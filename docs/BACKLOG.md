@@ -133,8 +133,10 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### vendor-risk
 
-- [ ] Real monitor feeds (status pages, CVE, SOC2/cert expiry); SLA tracking;
-      dependency mapping to affected agents. (alert thresholds done — see below)
+- [ ] Real monitor feeds (status pages, CVE, SOC2/cert expiry); dependency
+      mapping to affected agents. (alert thresholds + signal-based SLA tracking
+      via `slaReport` done; literal uptime-% SLA depends on the real feeds — see
+      below)
 
 ---
 
@@ -204,6 +206,21 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-21** — Added vendor-risk SLA tracking (M2 feature-depth). New
+  `slaReport(vendorId, opts?)` projects the vendor's `availability`-kind signals
+  within a configurable look-back window into an SLA `status` (`ok` / `at_risk` /
+  `breaching`) by counting against `atRiskAfter` / `breachAfter` thresholds
+  (defaults: 30-day window, 1, 3); also reports the count and severe (high/
+  critical) count. Pure projection over the existing `availability` signal kind —
+  **no `VendorSchema` change, no new dep** (correcting an earlier note that this
+  needed a schema field). Config via `VendorRiskConfig.sla`; `NOT_FOUND` for an
+  unknown vendor; tenant-scoped. Honest scope: tracks availability _signals_ vs
+  thresholds, not literal uptime % (that needs the deferred real monitor feeds).
+  Advanced the SLA Phase 1 TODO. **Next:** vendor-risk's remaining work (real feeds
+  - dependency mapping) and the other scaffolds (rollback executor adapters,
+    evidence external capture) are all adapter/dep-package work that needs a user
+    call; vendor-risk is otherwise close to a GA candidate.
 
 - **2026-06-21** — Declared **Incident Forensics** and **Decision Memory** GA
   (user-approved maturity flip). Updated every maturity statement consistently:

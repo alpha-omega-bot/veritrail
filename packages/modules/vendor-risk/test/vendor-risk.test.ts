@@ -472,3 +472,141 @@ describe('alert thresholds', () => {
     expect(alerts[0]?.data).toMatchObject({ toBand: 'high', alertBand: 'high' });
   });
 });
+
+describe('slaReport', () => {
+  function setupSla(sla?: { windowMs?: number; atRiskAfter?: number; breachAfter?: number }): {
+    module: VendorRiskModule;
+    clock: FixedClock;
+  } {
+    const clock = new FixedClock(START);
+    const ledger = createInMemoryLedger({ clock, ids: new SequentialIdGenerator() });
+    const ctx: ModuleContext = {
+      ledger,
+      clock,
+      ids: new SequentialIdGenerator(),
+      logger: noopLogger,
+    };
+    return { module: createVendorRiskModule(ctx, sla ? { sla } : undefined), clock };
+  }
+
+  async function availability(
+    module: VendorRiskModule,
+    vendorId: string,
+    severity: 'low' | 'high' = 'low',
+  ): Promise<void> {
+    const res = await module.recordSignal({
+      vendorId,
+      kind: 'availability',
+      severity,
+      summary: 'availability dip',
+    });
+    expect(res.ok).toBe(true);
+  }
+
+  it('returns NOT_FOUND for an unknown vendor', async () => {
+    const { module } = setupSla();
+    const res = await module.slaReport('ven_missing');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe('NOT_FOUND');
+  });
+
+  it('is ok with no availability signals', async () => {
+    const { module } = setupSla();
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'infra' });
+    const res = await module.slaReport('ven_1');
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value.status).toBe('ok');
+      expect(res.value.availabilitySignals).toBe(0);
+    }
+  });
+
+  it('crosses ok → at_risk → breaching by default thresholds (1, 3)', async () => {
+    const { module } = setupSla();
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'infra' });
+
+    let res = await module.slaReport('ven_1');
+    if (res.ok) expect(res.value.status).toBe('ok');
+
+    await availability(module, 'ven_1');
+    res = await module.slaReport('ven_1');
+    if (res.ok) expect(res.value.status).toBe('at_risk');
+
+    await availability(module, 'ven_1');
+    await availability(module, 'ven_1');
+    res = await module.slaReport('ven_1');
+    if (res.ok) {
+      expect(res.value.status).toBe('breaching');
+      expect(res.value.availabilitySignals).toBe(3);
+    }
+  });
+
+  it('only counts availability-kind signals, not other risk signals', async () => {
+    const { module } = setupSla();
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'infra' });
+    await module.recordSignal({
+      vendorId: 'ven_1',
+      kind: 'breach',
+      severity: 'critical',
+      summary: 'x',
+    });
+    const res = await module.slaReport('ven_1');
+    if (res.ok) {
+      expect(res.value.availabilitySignals).toBe(0);
+      expect(res.value.status).toBe('ok');
+    }
+  });
+
+  it('excludes availability signals older than the window', async () => {
+    const { module, clock } = setupSla(); // 30-day default window
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'infra' });
+    await availability(module, 'ven_1');
+    await availability(module, 'ven_1'); // 2 signals at START
+
+    clock.advance(31 * DAY); // both now older than the 30-day window
+    const res = await module.slaReport('ven_1');
+    if (res.ok) {
+      expect(res.value.availabilitySignals).toBe(0);
+      expect(res.value.status).toBe('ok');
+    }
+  });
+
+  it('counts high/critical availability signals as severe', async () => {
+    const { module } = setupSla();
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'infra' });
+    await availability(module, 'ven_1', 'low');
+    await availability(module, 'ven_1', 'high');
+    const res = await module.slaReport('ven_1');
+    if (res.ok) {
+      expect(res.value.availabilitySignals).toBe(2);
+      expect(res.value.severeSignals).toBe(1);
+    }
+  });
+
+  it('honors custom thresholds', async () => {
+    const { module } = setupSla({ atRiskAfter: 2, breachAfter: 4 });
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'infra' });
+    await availability(module, 'ven_1');
+    let res = await module.slaReport('ven_1');
+    if (res.ok) expect(res.value.status).toBe('ok'); // 1 < atRiskAfter=2
+    await availability(module, 'ven_1');
+    res = await module.slaReport('ven_1');
+    if (res.ok) expect(res.value.status).toBe('at_risk'); // 2
+  });
+
+  it('scopes the SLA projection to tenant labels', async () => {
+    const { module } = setupSla();
+    const acme = { labels: { tenant: 'acme', project: 'alpha' } };
+    await module.register({ id: 'ven_1', name: 'Acme', category: 'infra' }, acme);
+    // An availability signal recorded under a different tenant must not count.
+    await module.recordSignal(
+      { vendorId: 'ven_1', kind: 'availability', severity: 'high', summary: 'x' },
+      { labels: { tenant: 'other', project: 'alpha' } },
+    );
+    const scoped = await module.slaReport('ven_1', acme);
+    if (scoped.ok) {
+      expect(scoped.value.availabilitySignals).toBe(0);
+      expect(scoped.value.status).toBe('ok');
+    }
+  });
+});

@@ -71,6 +71,12 @@ interface VendorRiskProjectionOptions {
 interface VendorRiskConfig {
   /** Emit a `note` alert when a signal raises a vendor up across this band. */
   readonly alertBand?: RiskBand;
+  /** Thresholds for slaReport (defaults: 30-day window, at_risk≥1, breaching≥3). */
+  readonly sla?: {
+    windowMs?: number;
+    atRiskAfter?: number;
+    breachAfter?: number;
+  };
 }
 
 class VendorRiskModule implements VeritrailModule {
@@ -90,11 +96,23 @@ class VendorRiskModule implements VeritrailModule {
     opts?: VendorRiskProjectionOptions,
   ): Promise<Result<VendorRiskScore, VeritrailError>>;
   assess(opts?: VendorRiskProjectionOptions): Promise<VendorRiskScore[]>;
+  slaReport(
+    vendorId: string,
+    opts?: VendorRiskProjectionOptions,
+  ): Promise<Result<SlaReport, VeritrailError>>;
   ingest(source: MonitorSource): Promise<number>;
 }
 
 function createVendorRiskModule(ctx: ModuleContext, config?: VendorRiskConfig): VendorRiskModule;
 ```
+
+`slaReport(vendorId)` projects the vendor's `availability`-kind signals within the
+configured look-back window into an SLA `status` — `ok` | `at_risk` | `breaching`
+— by counting them against the `atRiskAfter` / `breachAfter` thresholds (it also
+reports the count and how many were `high`/`critical`). It tracks discrete
+availability **signals** against thresholds, not a literal uptime percentage —
+raw uptime is part of the deferred real-monitor-feeds work. `NOT_FOUND` for an
+unknown vendor; tenant-scoped via `opts`.
 
 `register`/`recordSignal` validate input with the core's `VendorSchema` /
 `VendorSignalSchema`, assigning an id (`ven…` / `sig…`) when absent. Expected
@@ -155,5 +173,6 @@ const ranked = await vr.assess(); // [{ vendorId: 'ven_openai', score, band, ...
 
 - **Real feeds** — `MonitorSource` adapters for status pages, CVE/advisory
   feeds, and SOC 2 / certification expiry.
-- **SLA tracking** — track availability/uptime signals against contractual SLAs
-  and surface breaches.
+- **SLA tracking** — `slaReport` tracks `availability`-kind signals against
+  count thresholds. Remaining: literal uptime-percentage / contractual-SLA
+  tracking, which depends on the real availability feeds above.

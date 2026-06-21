@@ -39,6 +39,8 @@ export interface VendorRiskConfig {
    * default) disables alerting entirely. See {@link VendorRiskModule.recordSignal}.
    */
   readonly alertBand?: RiskBand;
+  /** Thresholds for {@link VendorRiskModule.slaReport}. Defaults apply per field. */
+  readonly sla?: SlaConfig;
 }
 
 /** Rank of each risk band, lowest to highest, for threshold comparisons. */
@@ -56,6 +58,34 @@ export interface VendorRiskProjectionOptions {
   readonly labels?: Readonly<Record<string, string>>;
 }
 
+/** Thresholds for {@link VendorRiskModule.slaReport}. */
+export interface SlaConfig {
+  /** Look-back window in ms over which availability signals are counted. Default 30 days. */
+  readonly windowMs?: number;
+  /** `at_risk` once this many availability signals fall in the window. Default 1. */
+  readonly atRiskAfter?: number;
+  /** `breaching` once this many fall in the window. Default 3. */
+  readonly breachAfter?: number;
+}
+
+/** SLA standing derived from recent availability signals. */
+export type SlaStatus = 'ok' | 'at_risk' | 'breaching';
+
+/** An availability/SLA assessment for one vendor over a window. */
+export interface SlaReport {
+  readonly vendorId: string;
+  readonly status: SlaStatus;
+  /** Number of `availability`-kind signals within the window. */
+  readonly availabilitySignals: number;
+  /** Count of those signals at `high` or `critical` severity. */
+  readonly severeSignals: number;
+  /** Window length in ms the report covers. */
+  readonly windowMs: number;
+}
+
+const DAY_MS = 86_400_000;
+const SLA_DEFAULTS = { windowMs: 30 * DAY_MS, atRiskAfter: 1, breachAfter: 3 } as const;
+
 /**
  * Vendor Risk engine — a projection over the shared ledger.
  *
@@ -72,10 +102,16 @@ export class VendorRiskModule implements VeritrailModule {
 
   readonly #ctx: ModuleContext;
   readonly #alertBand: RiskBand | undefined;
+  readonly #sla: Required<SlaConfig>;
 
   constructor(ctx: ModuleContext, config?: VendorRiskConfig) {
     this.#ctx = ctx;
     this.#alertBand = config?.alertBand;
+    this.#sla = {
+      windowMs: config?.sla?.windowMs ?? SLA_DEFAULTS.windowMs,
+      atRiskAfter: config?.sla?.atRiskAfter ?? SLA_DEFAULTS.atRiskAfter,
+      breachAfter: config?.sla?.breachAfter ?? SLA_DEFAULTS.breachAfter,
+    };
   }
 
   /**
@@ -233,6 +269,49 @@ export class VendorRiskModule implements VeritrailModule {
     }
     const signals = await this.#signalRecordsFor(vendorId, opts);
     return ok(computeScore(vendor, signals, this.#ctx.clock.now()));
+  }
+
+  /**
+   * Assess a vendor's availability SLA standing from its recent `availability`
+   * signals. Counts availability-kind signals within the configured window
+   * (from `now` backward) and maps the count to `ok` / `at_risk` / `breaching`
+   * via the configured thresholds. Returns `NOT_FOUND` for an unknown vendor;
+   * tenant-scoped via `opts`.
+   *
+   * Note: this tracks discrete availability *signals* against thresholds, not a
+   * literal uptime percentage — raw uptime requires the (deferred) real monitor
+   * feeds.
+   */
+  async slaReport(
+    vendorId: string,
+    opts?: VendorRiskProjectionOptions,
+  ): Promise<Result<SlaReport, VeritrailError>> {
+    const vendors = await this.listVendors(opts);
+    if (!vendors.some((v) => v.id === vendorId)) {
+      return err(notFoundError(`unknown vendor: ${vendorId}`, { vendorId }));
+    }
+
+    const now = this.#ctx.clock.now();
+    const cutoff = now - this.#sla.windowMs;
+    let availabilitySignals = 0;
+    let severeSignals = 0;
+    for (const { signal, timestamp } of await this.#signalRecordsFor(vendorId, opts)) {
+      if (signal.kind !== 'availability' || timestamp < cutoff) continue;
+      availabilitySignals += 1;
+      if (signal.severity === 'high' || signal.severity === 'critical') severeSignals += 1;
+    }
+
+    let status: SlaStatus = 'ok';
+    if (availabilitySignals >= this.#sla.breachAfter) status = 'breaching';
+    else if (availabilitySignals >= this.#sla.atRiskAfter) status = 'at_risk';
+
+    return ok({
+      vendorId,
+      status,
+      availabilitySignals,
+      severeSignals,
+      windowMs: this.#sla.windowMs,
+    });
   }
 
   /** Score every vendor, sorted by score descending (riskiest first). */
