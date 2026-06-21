@@ -54,10 +54,11 @@ _engine/projection over that one event stream_ — never a parallel store. If yo
 are about to add a new database or a second source of truth, stop: model it as
 events on the ledger plus a projection.
 
-Maturity (v0.1): **Audit, Permissions, Spend Guard are GA** (fully implemented +
-tested). **Rollback, Forensics, Evidence, Decision Memory, Vendor Risk are
-scaffolds** with working baselines and locked public contracts. Bringing the
-scaffolds to GA is the bulk of your near-term work (ROADMAP Milestone 2).
+Maturity: **Audit, Permissions, Spend Guard, Incident Forensics, Decision Memory
+are GA** (stable contracts, test depth comparable across them). **Rollback,
+Evidence, Vendor Risk remain scaffolds** with advanced baselines and locked
+public contracts — bringing those to GA is the remaining Milestone 2 work
+(plus deployment-side adapter packages for external feeds/content/executors).
 
 ---
 
@@ -72,8 +73,8 @@ veritrail/  (pnpm workspace, TypeScript ESM, Node >=20.11)
 │  ├─ cli/                  @veritrail/cli    — operator CLI (verify/summary/events/export/append/incident/vendor-risk)
 │  ├─ relational-store/     @veritrail/relational-store — SQL EventStore adapter behind the core port
 │  └─ modules/
-│     ├─ audit/  permissions/  spend-guard/        (GA)
-│     └─ rollback/  forensics/  evidence/  decision-memory/  vendor-risk/   (scaffold → bring to GA)
+│     ├─ audit/  permissions/  spend-guard/  forensics/  decision-memory/   (GA)
+│     └─ rollback/  evidence/  vendor-risk/   (scaffold → bring to GA)
 ├─ apps/console/            @veritrail/console — React/Vite read-only dashboard
 ├─ examples/                runnable quickstart
 ├─ docs/                    concepts, ADRs, THREAT-MODEL, REPO-SETUP, BACKLOG
@@ -215,9 +216,9 @@ Full detail in `ROADMAP.md`; the actionable, ordered task list is
    (SQLite/Postgres) behind the existing port; durable `append` (fsync /
    atomic write); Ed25519/KMS `Signer`; external anchoring of the chain head;
    server authN/authZ; PII redaction at the append boundary; rate limiting.
-3. **Milestone 2 — bring the five scaffold modules to GA** (rollback, forensics,
-   evidence, decision-memory, vendor-risk), clearing the open review findings in
-   `docs/BACKLOG.md` for each.
+3. **Milestone 2 — bring the remaining scaffold modules to GA** (rollback,
+   evidence, vendor-risk; forensics and decision-memory are now GA), clearing the
+   open review findings in `docs/BACKLOG.md` for each.
 4. **Milestone 3 — console & real-time:** console to GA, SSE/websocket ledger
    tail, alerting, reporting.
 5. **Milestone 4 — platform:** multi-tenant, framework integrations + MCP server,

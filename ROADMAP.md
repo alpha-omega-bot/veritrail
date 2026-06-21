@@ -57,20 +57,27 @@ Make the system durable, secure, and operable for a first real deployment.
   limits, and write-route in-flight backpressure are implemented; append batching
   remains.
 
-## Milestone 2 — Complete the eight engines ⬜
+## Milestone 2 — Complete the eight engines 🚧
 
-Bring the five scaffolded capabilities to GA depth.
+Bring the scaffolded capabilities to GA depth. **Forensics and Decision Memory
+have reached GA** (stable contracts, test depth comparable to the M0 GA modules);
+the remaining three have advanced baselines with deferred enhancements.
 
-- ⬜ **Rollback**: saga/partial-failure semantics, idempotency keys, real executor
-  adapters, snapshot stores for `restore` strategies.
-- ⬜ **Forensics**: anomaly detection, blast-radius analysis, root-cause ranking,
-  snapshot diffs, and shareable incident bundles.
-- ⬜ **Evidence**: external content capture + hashing, signed evidence, full
-  decision↔evidence cross-linking, large-graph pagination.
-- ⬜ **Decision Memory**: semantic recall via embeddings, outcome linkage (did the
-  decision work?), recency/decay weighting.
-- ⬜ **Vendor Risk**: real monitor feeds (status pages, CVE, SOC2/cert expiry),
-  alert thresholds, SLA tracking, and dependency mapping to affected agents.
+- 🚧 **Rollback**: idempotent/retry-safe `execute` and `best_effort`/
+  `stop_on_failure` saga modes are done; real executor adapters and snapshot
+  stores for `restore` strategies remain.
+- ✅ **Forensics** (**GA**): timeline, incident report, causal chains,
+  blast-radius analysis, root-cause ranking, and shareable incident bundles.
+  Post-GA: anomaly detection, snapshot diffs.
+- 🚧 **Evidence**: corrected provenance traversal, decision→evidence
+  cross-linking, and `list` pagination are done; external content capture +
+  hashing, signed evidence, and windowed `trace` traversal remain.
+- ✅ **Decision Memory** (**GA**): recall (lexical + opt-in semantic via an
+  injectable `EmbeddingProvider` port), recency/decay weighting, and outcome
+  linkage. Post-GA: a concrete deployment-supplied embedding-model adapter.
+- 🚧 **Vendor Risk**: time-decayed scoring and alert thresholds are done; real
+  monitor feeds (status pages, CVE, SOC2/cert expiry), SLA tracking, and
+  dependency mapping to affected agents remain.
 
 ## Milestone 3 — Console & real-time ⬜
 

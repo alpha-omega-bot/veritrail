@@ -1,6 +1,6 @@
 # @veritrail/forensics
 
-Incident Forensics engine for Veritrail — **scaffold baseline**.
+Incident Forensics engine for Veritrail — **GA**.
 
 A read-only projection over the single tamper-evident `@veritrail/core` ledger.
 It reconstructs **incident timelines** and **causal chains** from the event
@@ -163,7 +163,9 @@ console.log(report.entries.map((e) => e.summary));
 // ['proposed action act-1 (http.request)', 'failed action act-1: timeout']
 ```
 
-## Phase 1 TODO
+## Post-GA enhancements
+
+The core forensic projections are GA. Still planned:
 
 - **Anomaly detection** — flag unusual event sequences, error spikes, and
   off-baseline actor behaviour within a correlation.

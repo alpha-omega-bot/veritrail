@@ -30,10 +30,10 @@ capabilities one coherent system rather than eight independent tools.
 
 **Maturity legend:**
 
-- **GA (v0.1)** — Audit, Permissions, Spend Guard. Production-shaped behavior.
-- **Scaffold (working baseline)** — Rollback, Incident Forensics, Evidence
-  Tracing, Decision Memory, Vendor Risk. Correct, deterministic baselines with
-  deferred Phase-1 work (noted per module).
+- **GA (v0.1)** — Audit, Permissions, Spend Guard, Incident Forensics, Decision
+  Memory. Stable public contracts and test depth comparable across these modules.
+- **Scaffold (working baseline)** — Rollback, Evidence Tracing, Vendor Risk.
+  Correct, deterministic baselines with deferred enhancements (noted per module).
 
 Every module exposes `readonly info = { name, version: '0.1.0', capability }`.
 
@@ -191,7 +191,7 @@ idempotency, and real executor adapters are deferred to Phase 1.
 
 ---
 
-## 5. Incident Forensics — **Scaffold (working baseline)**
+## 5. Incident Forensics — **GA (v0.1)**
 
 `@veritrail/forensics` (`packages/modules/forensics/src/engine.ts`)
 
@@ -269,7 +269,7 @@ label projection, or has no `contentHash`, else
 
 ---
 
-## 7. Decision Memory — **Scaffold (working baseline)**
+## 7. Decision Memory — **GA (v0.1)**
 
 `@veritrail/decision-memory` (`packages/modules/decision-memory/src/index.ts`)
 
