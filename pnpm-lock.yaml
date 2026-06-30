@@ -173,6 +173,15 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
 
+  packages/provider-monitors:
+    dependencies:
+      '@veritrail/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+
   packages/provider-signers:
     dependencies:
       '@veritrail/core':
