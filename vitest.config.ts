@@ -11,6 +11,7 @@ export default defineConfig({
       '@veritrail/sdk': src('./packages/sdk/src/index.ts'),
       '@veritrail/relational-store': src('./packages/relational-store/src/index.ts'),
       '@veritrail/provider-signers': src('./packages/provider-signers/src/index.ts'),
+      '@veritrail/provider-monitors': src('./packages/provider-monitors/src/index.ts'),
       '@veritrail/audit': src('./packages/modules/audit/src/index.ts'),
       '@veritrail/permissions': src('./packages/modules/permissions/src/index.ts'),
       '@veritrail/spend-guard': src('./packages/modules/spend-guard/src/index.ts'),

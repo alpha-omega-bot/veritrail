@@ -133,10 +133,18 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ### vendor-risk
 
-- [ ] Real monitor feeds (status pages, CVE, SOC2/cert expiry); dependency
-      mapping to affected agents. (alert thresholds + signal-based SLA tracking
-      via `slaReport` done; literal uptime-% SLA depends on the real feeds — see
-      below)
+- [x] **Provider monitor adapters.** Added `@veritrail/provider-monitors` package
+      mirroring the `@veritrail/provider-signers` pattern: dependency-light
+      `MonitorSource` adapters for HTTP status checks, StatusPage.io-compatible
+      status APIs, RSS/Atom advisory feeds (CVE/security bulletins), and TLS
+      certificate expiry checks. Each adapter fetches, parses, and transforms
+      external data into vendor signals; the vendor-risk module's existing
+      `ingest(source)` records them. Tests cover fetch/parse/transform failures,
+      StatusPage JSON shape, RSS/Atom feed parsing, and cert expiry thresholds.
+      Deployment-supplied provider SDKs and feed parsers stay out of the core.
+      (review: medium)
+- [ ] Dependency mapping to affected agents (wiring vendor signals to the agents
+      that depend on them).
 
 ---
 
@@ -206,6 +214,24 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-06-30** — Added `@veritrail/provider-monitors`, a dependency-light
+  package with `MonitorSource` adapters for vendor risk feeds (HTTP status
+  checks, StatusPage.io-compatible status APIs, RSS/Atom advisory feeds, TLS
+  certificate expiry). Mirrors the `@veritrail/provider-signers` pattern:
+  deployment-supplied network clients and feed-specific parsing stay out of
+  `@veritrail/core` and `@veritrail/vendor-risk`; each adapter fetches,
+  parses, and transforms external data into vendor signals via a
+  deployment-supplied callback (HTTP/advisory) or built-in heuristics
+  (StatusPage.io, cert expiry). The vendor-risk module's existing `ingest()`
+  records them. Tests cover fetch/parse/transform failures, StatusPage JSON
+  shape, RSS/Atom feed parsing (minimal regex-based parser, dependency-free),
+  and cert expiry threshold crossings (397 tests green). Workspace aliases
+  updated. Advanced the vendor-risk "real monitor feeds" backlog item; only
+  dependency mapping to affected agents remains for that line. **Next:** bring
+  the remaining scaffolds (rollback executor adapters, evidence external
+  capture) to GA, or declare forensics/decision-memory GA after maturity
+  review.
 
 - **2026-06-21** — Added vendor-risk SLA tracking (M2 feature-depth). New
   `slaReport(vendorId, opts?)` projects the vendor's `availability`-kind signals
