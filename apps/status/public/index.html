@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Veritrail Status</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script>
+      // Allow operators to override the API host at deploy time by injecting
+      // a <SCRIPT> tag that sets window.VERITRAIL_API BEFORE this page's
+      // main script runs.
+      window.VERITRAIL_API = window.VERITRAIL_API ?? 'https://api.veritrail.io';
+    </script>
+    <style>
+      :root {
+        --bg: #f4f6fa;
+        --card: #ffffff;
+        --text: #16191f;
+        --muted: #5f6b7a;
+        --border: #e3e7ec;
+        --green: #1d8649;
+        --yellow: #b7791f;
+        --red: #c93434;
+        --brand: #0972d3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 48px 20px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 32px;
+      }
+      header img {
+        width: 32px;
+        height: 32px;
+      }
+      header h1 {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+      }
+      main {
+        width: 100%;
+        max-width: 640px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 32px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+      }
+      .status-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 8px;
+      }
+      .dot {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        background: var(--muted);
+        box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.04);
+        transition: background-color 0.2s ease;
+      }
+      .dot.ok {
+        background: var(--green);
+        box-shadow: 0 0 0 4px rgba(29, 134, 73, 0.12);
+      }
+      .dot.warn {
+        background: var(--yellow);
+        box-shadow: 0 0 0 4px rgba(183, 121, 31, 0.14);
+      }
+      .dot.err {
+        background: var(--red);
+        box-shadow: 0 0 0 4px rgba(201, 52, 52, 0.14);
+      }
+      .status-text {
+        font-size: 24px;
+        font-weight: 600;
+      }
+      .last-check {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 0 0 24px 34px;
+      }
+      .error-message {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #991b1b;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+        margin: 0 0 24px 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .error-message:empty {
+        display: none;
+      }
+      .components {
+        border-top: 1px solid var(--border);
+        padding-top: 20px;
+        margin-top: 4px;
+      }
+      .components h2 {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin: 0 0 14px 0;
+      }
+      .component {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 14px;
+      }
+      .component:last-child {
+        border-bottom: none;
+      }
+      .component-name {
+        color: var(--text);
+      }
+      .component-value {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      .component-value .dot {
+        width: 10px;
+        height: 10px;
+        box-shadow: none;
+      }
+      footer {
+        margin-top: 24px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+      footer a {
+        color: var(--brand);
+        text-decoration: none;
+      }
+      footer a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <img src="/favicon.svg" alt="Veritrail" />
+      <h1>VERITRAIL STATUS</h1>
+    </header>
+
+    <main>
+      <div class="status-row">
+        <span id="dot" class="dot ok" aria-hidden="true"></span>
+        <span id="status-text" class="status-text">All systems operational</span>
+      </div>
+      <p id="last-check" class="last-check">Checking&hellip;</p>
+      <div id="error-message" class="error-message" role="alert"></div>
+
+      <section class="components" aria-label="Components">
+        <h2>Components</h2>
+        <div class="component">
+          <span class="component-name">API</span>
+          <span class="component-value">
+            <span id="comp-api-dot" class="dot"></span>
+            <span id="comp-api">&mdash;</span>
+          </span>
+        </div>
+        <div class="component">
+          <span class="component-name">Ledger integrity</span>
+          <span class="component-value">
+            <span id="comp-ledger-dot" class="dot"></span>
+            <span id="comp-ledger">&mdash;</span>
+          </span>
+        </div>
+        <div class="component">
+          <span class="component-name">Records count</span>
+          <span class="component-value">
+            <span id="comp-records">&mdash;</span>
+          </span>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      Auto-refresh every 30s &middot; Endpoint:
+      <a id="endpoint-link" href="#" rel="noopener"></a>
+    </footer>
+
+    <script>
+      (function () {
+        const apiBaseUrl = window.VERITRAIL_API ?? 'https://api.veritrail.io';
+        const REFRESH_MS = 30_000;
+        const endpoint = apiBaseUrl.replace(/\/$/, '') + '/api/health/ready';
+
+        const dot = document.getElementById('dot');
+        const statusText = document.getElementById('status-text');
+        const lastCheck = document.getElementById('last-check');
+        const errorMessage = document.getElementById('error-message');
+        const compApi = document.getElementById('comp-api');
+        const compApiDot = document.getElementById('comp-api-dot');
+        const compLedger = document.getElementById('comp-ledger');
+        const compLedgerDot = document.getElementById('comp-ledger-dot');
+        const compRecords = document.getElementById('comp-records');
+        const endpointLink = document.getElementById('endpoint-link');
+
+        endpointLink.href = endpoint;
+        endpointLink.textContent = endpoint;
+
+        function setDot(el, level) {
+          el.classList.remove('ok', 'warn', 'err');
+          if (level) el.classList.add(level);
+        }
+
+        function setOverall(level, label, errorText) {
+          setDot(dot, level);
+          statusText.textContent = label;
+          errorMessage.textContent = errorText || '';
+        }
+
+        function formatTime(date) {
+          try {
+            return date.toLocaleString(undefined, {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+            });
+          } catch {
+            return date.toISOString();
+          }
+        }
+
+        async function check() {
+          let body = null;
+          let httpOk = false;
+          let httpStatus = 0;
+          let errText = '';
+
+          try {
+            const res = await fetch(endpoint, {
+              method: 'GET',
+              cache: 'no-store',
+              headers: { Accept: 'application/json' },
+            });
+            httpOk = res.ok;
+            httpStatus = res.status;
+            try {
+              body = await res.json();
+            } catch {
+              body = null;
+            }
+          } catch (err) {
+            errText = err && err.message ? err.message : String(err);
+          }
+
+          lastCheck.textContent = 'Last checked ' + formatTime(new Date());
+
+          // Network/CORS failure
+          if (errText) {
+            setOverall('err', 'Service Disruption', 'Unable to reach API: ' + errText);
+            setDot(compApiDot, 'err');
+            compApi.textContent = 'Unreachable';
+            setDot(compLedgerDot, '');
+            compLedger.textContent = '—';
+            compRecords.textContent = '—';
+            return;
+          }
+
+          const ready = body && typeof body === 'object' ? body.ready === true : false;
+          const ledgerOk =
+            body && typeof body === 'object'
+              ? (body.ledger?.ok ?? body.ledger?.integrity ?? body.ledgerOk)
+              : undefined;
+          const recordsCount =
+            body && typeof body === 'object'
+              ? (body.records?.count ?? body.recordsCount ?? body.records)
+              : undefined;
+          const detail =
+            body && typeof body === 'object'
+              ? body.error || body.message || body.reason
+              : undefined;
+
+          // API component reflects HTTP reachability
+          if (httpOk) {
+            setDot(compApiDot, 'ok');
+            compApi.textContent = 'Operational';
+          } else {
+            setDot(compApiDot, 'err');
+            compApi.textContent = 'HTTP ' + httpStatus;
+          }
+
+          // Ledger integrity component
+          if (ledgerOk === true) {
+            setDot(compLedgerDot, 'ok');
+            compLedger.textContent = 'Verified';
+          } else if (ledgerOk === false) {
+            setDot(compLedgerDot, 'err');
+            compLedger.textContent = 'Failed';
+          } else {
+            setDot(compLedgerDot, '');
+            compLedger.textContent = '—';
+          }
+
+          // Records count component
+          if (typeof recordsCount === 'number' && Number.isFinite(recordsCount)) {
+            compRecords.textContent = recordsCount.toLocaleString();
+          } else {
+            compRecords.textContent = '—';
+          }
+
+          // Overall status
+          if (httpOk && ready && ledgerOk !== false) {
+            setOverall('ok', 'All systems operational', '');
+          } else if (httpOk && (ready === false || ledgerOk === false)) {
+            const issue =
+              ledgerOk === false
+                ? 'Ledger integrity check failed'
+                : detail || 'Service reports not ready';
+            setOverall('warn', 'Partial Service Disruption', issue);
+          } else {
+            setOverall('err', 'Service Disruption', detail || 'API returned HTTP ' + httpStatus);
+          }
+        }
+
+        check();
+        setInterval(check, REFRESH_MS);
+      })();
+    </script>
+  </body>
+</html>

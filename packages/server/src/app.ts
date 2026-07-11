@@ -37,6 +37,11 @@ import {
   type RouteAccess,
   type ServerRole,
 } from './auth.js';
+import {
+  registerControlPlaneRoutes,
+  type ControlPlaneRoutesConfig,
+} from './control-plane-routes.js';
+import { registerExtensions, type ExtensionOptions } from './extensions.js';
 import { asNumber, asString, replyError, replyResult } from './http.js';
 import {
   createRateLimitPreHandler,
@@ -47,7 +52,9 @@ import {
   writeRouteConfig,
   type ServerLimitsConfig,
 } from './limits.js';
+import { MetricsCollector } from './metrics.js';
 import { createPlatform, type Platform } from './platform.js';
+import { registerStreamRoutes } from './stream-routes.js';
 
 export interface BuildServerOptions {
   /** Inject a ledger (e.g. for tests). Takes precedence over `ledgerFile`. */
@@ -72,9 +79,43 @@ export interface BuildServerOptions {
   auth?: AuthConfig;
   /** Request size, rate, and write backpressure controls. */
   limits?: ServerLimitsConfig;
+  /**
+   * Optional SaaS control-plane wiring. When supplied, the server mounts
+   * /api/v1/control/* endpoints for orgs, projects, API keys, magic-link
+   * sessions, and Stripe billing webhooks. Omit to preserve the legacy
+   * library-server behaviour with no SaaS surface.
+   */
+  controlPlane?: ControlPlaneRoutesConfig;
+  /**
+   * Optional opt-in extensions (compliance reports, cryptographic receipts,
+   * policy simulator, AI RCA, cost optimizer). Each is OFF by default; pass
+   * a non-empty `extensions` object to enable individual surfaces.
+   */
+  extensions?: ExtensionOptions;
 }
 
 const startedAt = Date.now();
+
+const SWAGGER_UI_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Veritrail API</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: '/api/openapi.json',
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      presets: [SwaggerUIBundle.presets.apis],
+    });
+  </script>
+</body>
+</html>`;
 
 const AuthorizeInputSchema = z
   .object({
@@ -169,12 +210,61 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
 
   const limits = normalizeLimits(options.limits);
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: limits.bodyLimitBytes });
+  const metrics = new MetricsCollector();
+
   registerServerLimits(app, limits);
+
+  // Track request metrics
+  app.addHook('onRequest', async (request) => {
+    request.requestStartTime = Date.now();
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    if (request.requestStartTime) {
+      const duration = Date.now() - request.requestStartTime;
+      metrics.recordHttpRequest(duration);
+      if (reply.statusCode >= 400) {
+        metrics.recordHttpError();
+      }
+    }
+  });
+
+  // Add security headers
+  app.addHook('onSend', async (_request, reply) => {
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('X-XSS-Protection', '1; mode=block');
+    reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    reply.header(
+      'Permissions-Policy',
+      'geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()',
+    );
+  });
+
   if (options.cors !== false) {
     await app.register(cors, { origin: true });
   }
   const authenticator = options.auth ? new ApiKeyAuthenticator(options.auth) : undefined;
-  registerRoutes(app, platform, authenticator, limits.rateLimit);
+  registerRoutes(app, platform, authenticator, limits.rateLimit, metrics);
+  registerStreamRoutes(app, {
+    ledger: platform.ledger,
+    getLabelScope: (req) =>
+      (req.principal?.labelScope ?? undefined) as Readonly<Record<string, string>> | undefined,
+  });
+  if (options.controlPlane) {
+    registerControlPlaneRoutes(app, options.controlPlane);
+  }
+  if (options.extensions) {
+    registerExtensions(
+      app,
+      {
+        ledger: platform.ledger,
+        clock: options.clock ?? { now: () => Date.now() },
+        ids: options.ids ?? { next: (prefix: string) => `${prefix}_${Date.now()}` },
+      },
+      options.extensions,
+    );
+  }
   return app;
 }
 
@@ -183,6 +273,7 @@ function registerRoutes(
   platform: Platform,
   authenticator: ApiKeyAuthenticator | undefined,
   rateLimitConfig: RateLimitConfig | false,
+  metrics: MetricsCollector,
 ): void {
   const { ledger, audit, permissions, spendGuard, rollback, forensics, evidence } = platform;
   const { decisionMemory, vendorRisk } = platform;
@@ -225,20 +316,71 @@ function registerRoutes(
   const rollbackRead: RouteAccess = { roles: ['operator'], scope: 'rollback:read' };
   const rollbackExecute: RouteAccess = { roles: ['operator'], scope: 'rollback:execute' };
 
-  // ---- meta -------------------------------------------------------------
+  // ---- meta & monitoring ------------------------------------------------
   app.get('/api', publicRoute, async () => ({
     name: 'veritrail-server',
     version: '0.1.0',
     capabilities: CAPABILITIES,
   }));
 
-  app.get('/api/health', publicRoute, async () => ({
-    status: 'ok',
-    name: 'veritrail-server',
-    version: '0.1.0',
-    uptimeMs: Date.now() - startedAt,
+  app.get('/api/health', publicRoute, async () => {
+    const memUsage = process.memoryUsage();
+    return {
+      status: 'ok',
+      name: 'veritrail-server',
+      version: '0.1.0',
+      uptimeMs: Date.now() - startedAt,
+      memory: {
+        heapUsed: memUsage.heapUsed,
+        heapTotal: memUsage.heapTotal,
+        rss: memUsage.rss,
+      },
+    };
+  });
+
+  app.get('/api/health/live', publicRoute, async () => ({
+    alive: true,
+    timestamp: Date.now(),
   }));
 
+  app.get('/api/health/ready', publicRoute, async (_request, reply) => {
+    try {
+      const count = await ledger.count();
+      const integrityCheck = await audit.verify();
+      return reply.send({
+        ready: true,
+        records: count,
+        integrityOk: integrityCheck.ok,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      return reply.code(503).send({
+        ready: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: Date.now(),
+      });
+    }
+  });
+
+  app.get('/api/metrics', publicRoute, async (_request, reply) => {
+    const snapshot = metrics.snapshot();
+    return reply.send(snapshot);
+  });
+
+  app.get('/api/metrics/prometheus', publicRoute, async (_request, reply) => {
+    return reply.type('text/plain').send(metrics.getPrometheusMetrics());
+  });
+
+  app.get('/api/openapi.json', publicRoute, async () => {
+    const { buildOpenApiSpec } = await import('@veritrail/openapi');
+    return buildOpenApiSpec();
+  });
+
+  app.get('/api/docs', publicRoute, async (_request, reply) => {
+    return reply.type('text/html').send(SWAGGER_UI_HTML);
+  });
+
+  // Legacy endpoint for backwards compatibility
   app.get('/api/ready', publicRoute, async (_request, reply) => {
     const count = await ledger.count();
     return reply.send({ ready: true, records: count });
@@ -855,4 +997,10 @@ function parseActionWithActor(body: unknown): ParsedActionWithActor {
     opts.actor = actor.data;
   }
   return { ok: true, action: action.data, opts };
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    requestStartTime?: number;
+  }
 }

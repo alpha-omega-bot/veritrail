@@ -1,0 +1,35 @@
+{
+  "name": "@veritrail/mcp-server",
+  "version": "0.1.0",
+  "description": "Veritrail MCP server — give Claude Code, Cursor, and any MCP host plug-and-play AI agent governance: tamper-evident audit, permissions, spend, and incident forensics with two lines of config.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "veritrail-mcp": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/core": "workspace:*",
+    "@veritrail/sdk": "workspace:*",
+    "zod": "^3.24.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@veritrail/webhook-worker",
+  "version": "0.1.0",
+  "description": "Background worker that delivers signed Veritrail webhooks with exponential-backoff retries.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

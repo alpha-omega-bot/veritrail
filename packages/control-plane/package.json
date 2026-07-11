@@ -1,0 +1,31 @@
+{
+  "name": "@veritrail/control-plane",
+  "version": "0.1.0",
+  "description": "Multi-tenant SaaS control plane for Veritrail: organizations, projects, users, memberships, API keys, magic-link sessions. The SaaS layer above the ledger.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/migrations",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/relational-store": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

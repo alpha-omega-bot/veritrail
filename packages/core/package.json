@@ -19,7 +19,8 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "rm -rf dist *.tsbuildinfo"
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "bench": "vitest bench --run"
   },
   "dependencies": {
     "zod": "^3.24.1"

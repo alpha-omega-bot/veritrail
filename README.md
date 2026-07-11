@@ -46,20 +46,28 @@ they are **engines and projections over that one ledger.**
 
 ## The eight capabilities
 
-| #   | Capability             | What it does                                                               | v0.1 status |
-| --- | ---------------------- | -------------------------------------------------------------------------- | ----------- |
-| 1   | **Audit**              | Query, verify, and export the tamper-evident ledger.                       | **GA**      |
-| 2   | **Permissions**        | Deny-by-default policy engine that gates agent actions before they run.    | **GA**      |
-| 3   | **Spend Guard**        | Budget tracking with hard-stop enforcement over cost events.               | **GA**      |
-| 4   | **Rollback**           | Build & execute compensating plans to reverse recorded reversible actions. | Scaffold    |
-| 5   | **Incident Forensics** | Reconstruct timelines and causal chains for an incident.                   | **GA**      |
-| 6   | **Evidence Tracing**   | Content-addressed provenance graph linking decisions → evidence → sources. | Scaffold    |
-| 7   | **Decision Memory**    | Record and recall agent decisions and their rationale.                     | **GA**      |
-| 8   | **Vendor Risk**        | Inventory third parties and score time-decayed risk signals.               | Scaffold    |
+| #   | Capability             | What it does                                                               | v0.1 status | Builds on it                 |
+| --- | ---------------------- | -------------------------------------------------------------------------- | ----------- | ---------------------------- |
+| 1   | **Audit**              | Query, verify, and export the tamper-evident ledger.                       | **GA**      | Receipts, Compliance Reports |
+| 2   | **Permissions**        | Deny-by-default policy engine that gates agent actions before they run.    | **GA**      | Simulator                    |
+| 3   | **Spend Guard**        | Budget tracking with hard-stop enforcement over cost events.               | **GA**      | Cost Optimizer               |
+| 4   | **Rollback**           | Build & execute compensating plans to reverse recorded reversible actions. | Scaffold    |                              |
+| 5   | **Incident Forensics** | Reconstruct timelines and causal chains for an incident.                   | **GA**      | Auto-RCA                     |
+| 6   | **Evidence Tracing**   | Content-addressed provenance graph linking decisions → evidence → sources. | Scaffold    |                              |
+| 7   | **Decision Memory**    | Record and recall agent decisions and their rationale.                     | **GA**      |                              |
+| 8   | **Vendor Risk**        | Inventory third parties and score time-decayed risk signals.               | Scaffold    |                              |
 
 > **GA** capabilities are fully implemented and tested. **Scaffold** capabilities
 > ship a working, tested baseline over the same ledger, with their deeper concerns
 > tracked on the [roadmap](./ROADMAP.md). Honesty about maturity is a feature.
+>
+> The "Builds on it" column points to revolutionary features layered on top of
+> the GA primitives — none of them are separate products. **Receipts** sign and
+> export Audit entries as portable proofs; **Simulator** replays Permissions
+> against historic traffic before you ship a policy; **Auto-RCA** turns
+> Forensics timelines into ranked root-cause hypotheses; **Cost Optimizer**
+> mines Spend Guard projections for savings; **Compliance Reports** generate
+> SOC 2 / ISO / EU AI Act artifacts straight from Audit.
 
 ## Quickstart
 
@@ -102,6 +110,58 @@ console.log(await audit.verify()); // { ok: true, head: '…', … }
 See [`examples/`](./examples) for runnable end-to-end flows, and each package's
 README for its full API.
 
+## Hosted SaaS or self-host
+
+Veritrail runs the same way whether you point your agents at our managed
+endpoint or stand up the stack inside your own VPC. Pick the model that fits
+your compliance posture; you can switch later by changing one base URL.
+
+### Hosted (recommended)
+
+Sign in at **[veritrail.io](https://veritrail.io)** with a magic link and start
+ingesting events in minutes. The hosted plane runs the same code that ships in
+this repo, deployed against a managed Postgres EventStore with regional
+isolation.
+
+- Free tier: 10,000 events/month, 7-day retention, unlimited read-only seats.
+- Magic-link auth, SSO (SAML/OIDC) on the team plan, scoped API keys per env.
+- All eight capabilities plus Receipts, Simulator, Auto-RCA, Cost Optimizer,
+  and Compliance Reports — no feature gating between hosted and self-host.
+- Stripe-metered billing, status page at [status.veritrail.io](https://status.veritrail.io),
+  and a 99.9% uptime SLA on paid tiers.
+- Webhook fan-out, audit-log export to S3/GCS, and bring-your-own-KMS for
+  ledger signing keys on enterprise tiers.
+
+### Self-host
+
+Follow the [Quickstart](#quickstart) above to run the full stack on your own
+infrastructure. `pnpm install && pnpm run verify` brings up an end-to-end
+environment; production deployments use the relational EventStore in
+`@veritrail/relational-store` against Postgres.
+
+Every capability — including the new revolutionary features — works
+self-hosted. The only component that requires external credentials is
+**billing**, which expects `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in
+the control plane; omit them and the billing routes degrade cleanly while
+everything else continues to function.
+
+## Distribution channels
+
+Veritrail ships in the package manager your agents already use.
+
+- **npm** — [`@veritrail/sdk`](./packages/sdk) (in-process + HTTP),
+  [`@veritrail/cli`](./packages/cli) (operator CLI),
+  [`@veritrail/mcp-server`](./packages/mcp-server) (MCP host integration),
+  [`@veritrail/receipt`](./packages/receipt) (signed action receipts).
+- **PyPI** — `pip install veritrail`, built from
+  [`packages/sdk-python`](./packages/sdk-python). Mirrors the TypeScript SDK's
+  surface for Python agents and notebook workflows.
+- **Go** — `go get github.com/veritrail/sdk-go`, built from
+  [`packages/sdk-go`](./packages/sdk-go). Native client for Go services and
+  serverless functions.
+- **MCP** — `npx @veritrail/mcp-server` exposes the ledger, policy engine, and
+  forensics tools to Claude Desktop, Cursor, and any other MCP host.
+
 ## Repository layout
 
 ```
@@ -109,9 +169,21 @@ veritrail/
 ├─ packages/
 │  ├─ core/                 @veritrail/core   — ledger, domain schemas, storage, ports (the trust core)
 │  ├─ sdk/                  @veritrail/sdk    — typed in-process instrumentation + HTTP client
+│  ├─ sdk-python/           veritrail         — Python SDK (PyPI)
+│  ├─ sdk-go/               github.com/veritrail/sdk-go — Go SDK
 │  ├─ server/               @veritrail/server — Fastify REST API mounting all modules
 │  ├─ cli/                  @veritrail/cli    — operator CLI (ingest, verify, query, policy, budget)
+│  ├─ mcp-server/           @veritrail/mcp-server — MCP host integration (Claude, Cursor, …)
+│  ├─ control-plane/        @veritrail/control-plane — tenancy, auth, API keys, Stripe billing
+│  ├─ webhook-worker/       @veritrail/webhook-worker — durable webhook fan-out
+│  ├─ openapi/              @veritrail/openapi — generated OpenAPI spec + typed clients
+│  ├─ integrations/         @veritrail/integrations — Slack, PagerDuty, S3/GCS export
 │  ├─ relational-store/     @veritrail/relational-store — SQL EventStore adapter
+│  ├─ receipt/              @veritrail/receipt — signed, portable action receipts
+│  ├─ policy-simulator/     @veritrail/policy-simulator — replay policies against historic events
+│  ├─ auto-rca/             @veritrail/auto-rca — automated root-cause analysis over forensics
+│  ├─ cost-optimizer/       @veritrail/cost-optimizer — spend recommendations from ledger projections
+│  ├─ compliance/           @veritrail/compliance — SOC 2 / ISO / EU AI Act report generation
 │  └─ modules/
 │     ├─ audit/             @veritrail/audit
 │     ├─ permissions/       @veritrail/permissions
@@ -121,7 +193,10 @@ veritrail/
 │     ├─ evidence/          @veritrail/evidence
 │     ├─ decision-memory/   @veritrail/decision-memory
 │     └─ vendor-risk/       @veritrail/vendor-risk
-├─ apps/console/            @veritrail/console — React/Vite operator dashboard
+├─ apps/
+│  ├─ console/              @veritrail/console   — React/Vite operator dashboard
+│  ├─ marketing/            @veritrail/marketing — veritrail.io site
+│  └─ status/               @veritrail/status    — status.veritrail.io page
 ├─ docs/                    architecture, concepts, ADRs, threat model
 └─ scripts/                 maintenance scripts
 ```

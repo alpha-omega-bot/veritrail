@@ -1,0 +1,30 @@
+{
+  "name": "@veritrail/integrations",
+  "version": "0.1.0",
+  "description": "Built-in destination adapters for Veritrail notifications: Slack Block Kit, PagerDuty Events API v2, and Resend transactional email — plus pre-built email templates for product flows.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

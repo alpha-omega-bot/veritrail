@@ -1,0 +1,31 @@
+{
+  "name": "@veritrail/policy-simulator",
+  "version": "0.1.0",
+  "description": "Replay a proposed Veritrail policy set against your recorded ledger history. See exactly which past actions would have been allowed, denied, or required approval — before shipping the change.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/core": "workspace:*",
+    "@veritrail/permissions": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

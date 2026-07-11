@@ -1,0 +1,7 @@
+Contact: mailto:security@veritrail.io
+Contact: https://veritrail.io/security
+Expires: 2027-06-30T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://veritrail.io/security.txt
+Policy: https://veritrail.io/security
+Acknowledgments: https://veritrail.io/security/acknowledgments

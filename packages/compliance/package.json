@@ -1,0 +1,30 @@
+{
+  "name": "@veritrail/compliance",
+  "version": "0.1.0",
+  "description": "Generate SOC 2, EU AI Act, HIPAA, and ISO 42001 compliance reports from the Veritrail ledger. Every control claim cites the specific ledger event IDs that prove it, so auditors can verify each line against the hash-chained receipts.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@veritrail/cost-optimizer",
+  "version": "0.1.0",
+  "description": "End-of-month spend forecasting, daily anomaly detection, and cheaper-model swap recommendations over Veritrail spend events. Pays for itself with one prevented overrun.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@veritrail/status",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Veritrail public status page — static HTML that pings /api/health/ready",
+  "scripts": {
+    "dev": "npx serve ./public -l 4000",
+    "build": "echo 'no build step — public/ is the artifact'"
+  }
+}

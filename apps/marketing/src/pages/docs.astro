@@ -1,0 +1,192 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+
+const quickstart = `import { Veritrail } from '@veritrail/sdk';
+
+const vt = new Veritrail({
+  apiKey: process.env.VERITRAIL_API_KEY!,
+  project: 'support-bot-prod',
+});
+
+// Wrap an agent turn in a trace; every tool call inside is
+// chained into the project's tamper-evident audit ledger.
+await vt.trace({ user: 'u_8312', turn: 'support-inquiry' }, async (span) => {
+  const decision = await vt.policy.check({
+    action: 'tool.refund',
+    inputs: { amount: 4200, currency: 'USD' },
+  });
+  if (!decision.allow) {
+    span.deny(decision.reason);
+    return;
+  }
+  // ... your agent code ...
+  span.complete({ outcome: 'refund_issued', receiptHash: decision.receiptHash });
+});`;
+
+const mcpJson = `{
+  "mcpServers": {
+    "veritrail": {
+      "command": "npx",
+      "args": ["-y", "@veritrail/mcp-server"],
+      "env": {
+        "VERITRAIL_API_KEY": "vt_live_REPLACE_ME",
+        "VERITRAIL_PROJECT": "support-bot-prod"
+      }
+    }
+  }
+}`;
+
+const verifyCli = `# Install once
+npm i -g @veritrail/verify
+
+# Pull a signed Receipt down from your console (or your archive)
+veritrail-verify receipt ./receipt-abc123.json \\
+  --public-key https://veritrail.io/keys/2026.pub
+
+# Output:
+#   receipt:    abc123
+#   project:    support-bot-prod
+#   sealed_at:  2026-06-30T14:22:08Z
+#   signer:     veritrail-2026 (rotated 2026-01-01)
+#   chain:      VERIFIED  (12,418 events, root 0x9af4...e2)
+#   signature:  VERIFIED  (Ed25519)`;
+---
+<Base
+  title="Docs — Veritrail"
+  description="Quickstart, MCP integration, and offline Receipt verification."
+>
+  <Nav />
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <h1>Docs</h1>
+        <p class="lede">
+          Three short paths to get from zero to a verifiable agent run.
+        </p>
+        <nav class="toc" aria-label="Sections">
+          <a href="#quickstart">Quickstart</a>
+          <a href="#mcp">MCP integration</a>
+          <a href="#receipts">Receipt verification</a>
+        </nav>
+      </div>
+    </section>
+
+    <section id="quickstart" class="doc-section">
+      <div class="container">
+        <span class="eyebrow">01 &middot; Quickstart</span>
+        <h2>Wrap your agent in 6 lines</h2>
+        <p>
+          The TypeScript SDK exposes one method you really need: <code>vt.trace()</code>.
+          Anything you do inside the callback — tool calls, policy checks, completions —
+          is appended to the project's hash-chained ledger, and the trace boundary
+          becomes a Receipt you can verify offline. The SDK is dependency-light
+          (only <code>undici</code>) and works in Node, Deno, and Edge runtimes.
+        </p>
+        <pre><code>{quickstart}</code></pre>
+        <p class="next">
+          That's it. Open the <a href="https://console.veritrail.io">console</a>, find
+          the trace, and click &ldquo;Download Receipt&rdquo; to get a JSON file you can keep
+          for compliance evidence.
+        </p>
+      </div>
+    </section>
+
+    <section id="mcp" class="doc-section alt">
+      <div class="container">
+        <span class="eyebrow">02 &middot; MCP integration</span>
+        <h2>Drop into Claude, Cursor, or any MCP host</h2>
+        <p>
+          The Veritrail MCP server exposes your audit ledger and policy engine as
+          <a href="https://modelcontextprotocol.io/">Model Context Protocol</a>
+          tools — so the same agent that writes events can also query, simulate, and
+          replay them, with the policy engine enforcing read scope. Add this to your
+          MCP client config:
+        </p>
+        <pre><code>{mcpJson}</code></pre>
+        <p class="next">
+          The host will spawn the server on demand. Tools registered:
+          <code>vt.search_events</code>, <code>vt.simulate_policy</code>,
+          <code>vt.fetch_receipt</code>, and <code>vt.explain_decision</code>.
+        </p>
+      </div>
+    </section>
+
+    <section id="receipts" class="doc-section">
+      <div class="container">
+        <span class="eyebrow">03 &middot; Receipts</span>
+        <h2>Verify offline with the open CLI</h2>
+        <p>
+          A Receipt is a self-contained JSON document: the trace tree, every policy
+          decision and tool I/O, the hash chain root, and an Ed25519 signature from
+          Veritrail's published signing key for the period. Anyone with the public key
+          can verify a Receipt without talking to our infrastructure. This matters when
+          your auditor wants evidence that survives us going down or going away.
+        </p>
+        <pre><code>{verifyCli}</code></pre>
+        <p class="next">
+          Public keys are published at
+          <a href="/keys"><code>veritrail.io/keys/</code></a> and signed with the
+          previous period's key, forming a verifiable rotation chain back to a hardware
+          root of trust.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .hero { padding: 4rem 0 2rem; background: linear-gradient(180deg, #f7faff 0%, #ffffff 100%); }
+  .lede { font-size: 1.15rem; color: var(--fg-muted); max-width: 620px; margin: 1rem 0 1.5rem; }
+  .toc {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .toc a {
+    padding: 0.4rem 0.85rem;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.9rem;
+  }
+
+  .doc-section { padding: 4rem 0; border-bottom: 1px solid var(--border); }
+  .doc-section.alt { background: var(--bg-alt); }
+  .doc-section:last-of-type { border-bottom: none; }
+  .eyebrow {
+    color: var(--accent);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .doc-section h2 { margin: 0.5rem 0 1rem; }
+  .doc-section p {
+    max-width: 720px;
+    color: var(--fg);
+  }
+  .doc-section .next {
+    color: var(--fg-muted);
+    font-size: 0.95rem;
+  }
+  pre {
+    background: #0f1729;
+    color: #e2e8f0;
+    border-color: #0f1729;
+    margin: 1.5rem 0;
+  }
+  .doc-section.alt pre { background: #0f1729; color: #e2e8f0; }
+  pre code { background: transparent; padding: 0; }
+  code {
+    background: var(--bg-alt);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  .doc-section.alt code { background: #e6ebf4; }
+  pre code { background: transparent; }
+</style>

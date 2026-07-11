@@ -58,3 +58,35 @@ src/
 The UI is built with the **[AWS Cloudscape design system](https://cloudscape.design/)**
 (`@cloudscape-design/components`) for an AWS-console look and feel. Navigation is
 hash-based (`#/overview`, `#/ledger`, …) — no router dependency.
+
+## Features & Polish
+
+### User Experience
+
+- **Keyboard shortcuts**: Alt+1 through Alt+5 for quick view switching
+- **Loading skeletons**: Contextual loading states instead of generic spinners
+- **Relative timestamps**: Recent events show "2 minutes ago" (hover for absolute time)
+- **Dynamic titles**: Browser tab updates to show current view
+- **Empty states**: Helpful messages and guidance when no data matches filters
+
+### Accessibility
+
+- Semantic HTML with proper ARIA labels throughout
+- Keyboard navigation support
+- Screen reader friendly status indicators
+- High contrast status colors for critical information
+- Focus management and skip links
+
+### Error Handling
+
+- React error boundary catches rendering errors
+- Graceful API fallback to sample data when server unavailable
+- Clear error messages with recovery actions (reload button)
+- Resilient offline mode for demos and development
+
+### Visual Design
+
+- Custom favicon with Veritrail brand colors
+- Responsive tables with resize and sticky headers
+- Improved metric displays with contextual hints
+- Professional AWS Console aesthetic via Cloudscape

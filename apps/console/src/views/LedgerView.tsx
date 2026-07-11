@@ -1,38 +1,65 @@
 import { getLedgerEvents, useAsync } from '../api.ts';
 import { formatDateTime, shortHash } from '../format.ts';
 import { SeverityStatus } from '../status.tsx';
-import { useMemo, useState } from 'react';
+import { TableSkeleton } from '../LoadingSkeleton.tsx';
+import { useEventStream } from '../useEventStream.ts';
+import { useAuth } from '../auth/AuthContext.tsx';
+import { useEffect, useMemo, useState } from 'react';
 import type { LedgerEvent } from '../types.ts';
 import Alert from '@cloudscape-design/components/alert';
+import Badge from '@cloudscape-design/components/badge';
 import Box from '@cloudscape-design/components/box';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
 import Select from '@cloudscape-design/components/select';
 import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import Spinner from '@cloudscape-design/components/spinner';
 import Table from '@cloudscape-design/components/table';
 
 const ALL = '__all__';
 
 export function LedgerView() {
+  const { session } = useAuth();
   const { data, loading, error, fromMock } = useAsync(() => getLedgerEvents(50), []);
   const [typeFilter, setTypeFilter] = useState<SelectProps.Option>({
     value: ALL,
     label: 'All types',
   });
 
-  const typeOptions = useMemo<SelectProps.Option[]>(() => {
-    const types = data === null ? [] : Array.from(new Set(data.events.map((e) => e.type))).sort();
-    return [{ value: ALL, label: 'All types' }, ...types.map((t) => ({ value: t, label: t }))];
-  }, [data]);
+  const stream = useEventStream<LedgerEvent>({
+    path: '/audit/events/stream',
+    max: 200,
+    enabled: session !== null,
+  });
 
-  const visible = useMemo(() => {
-    if (data === null) return [];
-    return typeFilter.value === ALL
-      ? data.events
-      : data.events.filter((e) => e.type === typeFilter.value);
-  }, [data, typeFilter]);
+  // Merge polled snapshot + streamed deltas. The polled list is the truth at
+  // load time; streamed events with seq > max(polled.seq) get prepended.
+  const merged = useMemo(() => {
+    const base = data?.events ?? [];
+    if (stream.events.length === 0) return base;
+    const baseMax = base.reduce<number>((m, e) => Math.max(m, e.seq ?? 0), 0);
+    const fresh = stream.events.filter((e) => (e.seq ?? 0) > baseMax);
+    return [...fresh.slice().reverse(), ...base];
+  }, [data, stream.events]);
+
+  const typeOptions = useMemo<SelectProps.Option[]>(() => {
+    const types = Array.from(new Set(merged.map((e) => e.type))).sort();
+    return [{ value: ALL, label: 'All types' }, ...types.map((t) => ({ value: t, label: t }))];
+  }, [merged]);
+
+  const visible = useMemo(
+    () => (typeFilter.value === ALL ? merged : merged.filter((e) => e.type === typeFilter.value)),
+    [merged, typeFilter],
+  );
+
+  // Pulse a "Live" badge when new events arrive.
+  const [pulse, setPulse] = useState(false);
+  useEffect(() => {
+    if (stream.events.length === 0) return;
+    setPulse(true);
+    const t = setTimeout(() => setPulse(false), 400);
+    return () => clearTimeout(t);
+  }, [stream.events.length]);
 
   return (
     <ContentLayout
@@ -41,6 +68,13 @@ export function LedgerView() {
           variant="h1"
           counter={data ? `(${visible.length}/${data.total.toLocaleString('en-US')})` : undefined}
           description="Append-only, hash-chained audit events."
+          info={
+            stream.status === 'open' ? (
+              <Badge color={pulse ? 'green' : 'blue'}>Live</Badge>
+            ) : stream.status === 'connecting' || stream.status === 'reconnecting' ? (
+              <Badge color="grey">Connecting…</Badge>
+            ) : null
+          }
         >
           Ledger
         </Header>
@@ -52,7 +86,7 @@ export function LedgerView() {
             The console could not reach the Veritrail API, so it is displaying sample data.
           </Alert>
         )}
-        {loading && <Spinner size="large" />}
+        {loading && <TableSkeleton rows={7} />}
         {!loading && error !== null && (
           <Alert type="error" header="Failed to load ledger">
             {error}
@@ -66,8 +100,15 @@ export function LedgerView() {
             items={visible}
             trackBy={(e) => String(e.seq)}
             empty={
-              <Box textAlign="center" color="inherit">
-                No events match this filter.
+              <Box textAlign="center" color="inherit" padding={{ vertical: 'xs' }}>
+                <SpaceBetween size="s">
+                  <Box variant="strong" fontSize="heading-m">
+                    No events match this filter
+                  </Box>
+                  <Box variant="p" color="text-body-secondary">
+                    Try selecting a different event type from the filter above.
+                  </Box>
+                </SpaceBetween>
               </Box>
             }
             filter={

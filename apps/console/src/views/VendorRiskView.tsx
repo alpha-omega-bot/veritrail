@@ -1,6 +1,7 @@
 import { formatDateTime } from '../format.ts';
 import { getVendorRisk, useAsync } from '../api.ts';
 import { RiskBandStatus } from '../status.tsx';
+import { TableSkeleton } from '../LoadingSkeleton.tsx';
 import type { RiskBand, VendorRiskScore } from '../types.ts';
 import Alert from '@cloudscape-design/components/alert';
 import Badge from '@cloudscape-design/components/badge';
@@ -8,7 +9,6 @@ import Box from '@cloudscape-design/components/box';
 import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import Spinner from '@cloudscape-design/components/spinner';
 import Table from '@cloudscape-design/components/table';
 
 const BAND_RANK: Record<RiskBand, number> = { low: 0, moderate: 1, elevated: 2, high: 3 };
@@ -42,7 +42,7 @@ export function VendorRiskView() {
             The console could not reach the Veritrail API, so it is displaying sample data.
           </Alert>
         )}
-        {loading && <Spinner size="large" />}
+        {loading && <TableSkeleton rows={4} />}
         {!loading && error !== null && (
           <Alert type="error" header="Failed to load vendor risk">
             {error}

@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: veritrail-server
+    restart: unless-stopped
+    ports:
+      - '8787:8787'
+    volumes:
+      - veritrail-data:/data
+    environment:
+      - NODE_ENV=production
+      - VERITRAIL_LEDGER_PATH=/data/veritrail-ledger.jsonl
+      - VERITRAIL_PORT=8787
+      # Optional: configure authentication
+      # - VERITRAIL_API_KEY=${VERITRAIL_API_KEY}
+      # - VERITRAIL_SIGNER_SECRET=${VERITRAIL_SIGNER_SECRET}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://localhost:8787/api/health/live', (r) => process.exit(r.statusCode === 200 ? 0 : 1))",
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - veritrail-network
+
+  console:
+    build:
+      context: .
+      dockerfile: apps/console/Dockerfile
+    container_name: veritrail-console
+    restart: unless-stopped
+    ports:
+      - '3000:80'
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      - VERITRAIL_API=http://server:8787
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:80/']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks:
+      - veritrail-network
+
+  # Optional: PostgreSQL for production ledger storage
+  postgres:
+    image: postgres:16-alpine
+    container_name: veritrail-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=veritrail
+      - POSTGRES_USER=veritrail
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U veritrail']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - veritrail-network
+    profiles:
+      - postgres
+
+  # Optional: Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: veritrail-prometheus
+    restart: unless-stopped
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    depends_on:
+      - server
+    networks:
+      - veritrail-network
+    profiles:
+      - monitoring
+
+  # Optional: Grafana for metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: veritrail-grafana
+    restart: unless-stopped
+    ports:
+      - '3001:3000'
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - veritrail-network
+    profiles:
+      - monitoring
+
+volumes:
+  veritrail-data:
+    driver: local
+  postgres-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  veritrail-network:
+    driver: bridge

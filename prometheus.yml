@@ -1,0 +1,15 @@
+# Prometheus configuration for Veritrail metrics
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'veritrail'
+    environment: 'production'
+
+scrape_configs:
+  - job_name: 'veritrail-server'
+    static_configs:
+      - targets: ['server:8787']
+    metrics_path: '/api/metrics/prometheus'
+    scrape_interval: 30s
+    scrape_timeout: 10s

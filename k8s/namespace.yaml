@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: veritrail
+  labels:
+    app.kubernetes.io/name: veritrail
+    app.kubernetes.io/part-of: veritrail

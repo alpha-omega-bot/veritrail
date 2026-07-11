@@ -1,0 +1,30 @@
+{
+  "name": "@veritrail/zk-compliance",
+  "version": "0.1.0",
+  "description": "Predicate-level zero-knowledge proofs over the tamper-evident Veritrail ledger. Prove to a counterparty that a property holds (e.g. \"no PII leaked outside the EU in Q3\") without revealing the underlying events. v0.1 ships verifiable Merkle-style commitments; full SNARK circuits land in v0.2.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/core": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

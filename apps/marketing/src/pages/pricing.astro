@@ -1,0 +1,300 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+
+// Mirrors packages/control-plane/src/plans.ts TIER_LIMITS.
+const tiers = [
+  {
+    name: 'Free',
+    price: '$0',
+    cadence: 'forever',
+    events: '10,000 events/mo',
+    projects: '1 project',
+    simulator: false,
+    receipts: false,
+    sso: false,
+    cta: { label: 'Start free', href: 'https://console.veritrail.io/signup' },
+    blurb: 'For solo devs evaluating agent governance.',
+  },
+  {
+    name: 'Starter',
+    price: '$49',
+    cadence: 'per month',
+    events: '100,000 events/mo',
+    projects: '3 projects',
+    simulator: false,
+    receipts: false,
+    sso: false,
+    cta: { label: 'Start 14-day trial', href: 'https://console.veritrail.io/signup?plan=starter' },
+    blurb: 'Small teams shipping a first production agent.',
+  },
+  {
+    name: 'Pro',
+    price: '$299',
+    cadence: 'per month',
+    events: '1,000,000 events/mo',
+    projects: '10 projects',
+    simulator: true,
+    receipts: true,
+    sso: false,
+    cta: { label: 'Start 14-day trial', href: 'https://console.veritrail.io/signup?plan=pro' },
+    blurb: 'Production agents that need audit-grade evidence.',
+    featured: true,
+  },
+  {
+    name: 'Enterprise',
+    price: 'Custom',
+    cadence: 'annual contract',
+    events: 'Unlimited events',
+    projects: 'Unlimited projects',
+    simulator: true,
+    receipts: true,
+    sso: true,
+    cta: { label: 'Contact sales', href: 'mailto:sales@veritrail.io' },
+    blurb: 'SSO, BYOK signing keys, MSA, dedicated SE.',
+  },
+];
+
+const checkRow = (label: string, fn: (t: typeof tiers[number]) => boolean | string) => ({ label, fn });
+
+const rows = [
+  checkRow('Events / month', (t) => t.events),
+  checkRow('Projects', (t) => t.projects),
+  checkRow('Tamper-evident audit', () => true),
+  checkRow('Pre-crime simulator', (t) => t.simulator),
+  checkRow('Cryptographic receipts', (t) => t.receipts),
+  checkRow('SSO / SAML', (t) => t.sso),
+  checkRow('BYOK signing keys', (t) => t.name === 'Enterprise'),
+  checkRow('Email support', () => true),
+  checkRow('Priority + Slack support', (t) => t.name === 'Pro' || t.name === 'Enterprise'),
+];
+---
+<Base
+  title="Pricing — Veritrail"
+  description="Four straightforward tiers, from free forever through Enterprise with BYOK signing keys."
+>
+  <Nav />
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <h1>Pricing</h1>
+        <p class="lede">
+          One price per tier, metered overage above the included events.
+          No seat charges, no event-type tax.
+        </p>
+      </div>
+    </section>
+
+    <section class="tiers">
+      <div class="container">
+        <div class="tier-grid">
+          {tiers.map((t) => (
+            <article class={`tier ${t.featured ? 'tier-featured' : ''}`}>
+              {t.featured && <div class="badge">Most popular</div>}
+              <h2>{t.name}</h2>
+              <div class="price">
+                <span class="amount">{t.price}</span>
+                <span class="cadence">{t.cadence}</span>
+              </div>
+              <p class="blurb">{t.blurb}</p>
+              <ul class="features-list">
+                <li><strong>{t.events}</strong></li>
+                <li>{t.projects}</li>
+                <li>Tamper-evident audit ledger</li>
+                {t.simulator ? <li>Policy simulator + auto-RCA</li> : <li class="muted">No simulator</li>}
+                {t.receipts ? <li>Signed Receipts</li> : <li class="muted">No Receipts</li>}
+                {t.sso ? <li>SSO / SAML</li> : <li class="muted">No SSO</li>}
+              </ul>
+              <a href={t.cta.href} class={`btn ${t.featured ? 'btn-primary' : 'btn-secondary'}`}>{t.cta.label}</a>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="compare">
+      <div class="container">
+        <h2>Compare plans</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                {tiers.map((t) => <th>{t.name}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr>
+                  <th scope="row">{r.label}</th>
+                  {tiers.map((t) => {
+                    const v = r.fn(t);
+                    return <td>{typeof v === 'string' ? v : v ? <span class="yes" aria-label="included">&#10003;</span> : <span class="no" aria-label="not included">&minus;</span>}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq">
+      <div class="container">
+        <h2>FAQ</h2>
+        <details open>
+          <summary>What counts as an event?</summary>
+          <p>
+            An event is any individual record appended to the audit ledger — typically
+            one agent turn, one tool call, one policy decision, or one Receipt seal.
+            Background heartbeats and internal Veritrail control traffic are
+            <em>not</em> billed. The metering breakdown is visible per-project in your
+            console.
+          </p>
+        </details>
+        <details>
+          <summary>Can I downgrade?</summary>
+          <p>
+            Yes. Downgrades take effect at the end of the current billing period so you
+            keep what you've already paid for. If your projected usage exceeds the
+            target tier's included events, we'll warn you before applying the change so
+            you can choose to stay on the higher tier or accept metered overage.
+          </p>
+        </details>
+        <details>
+          <summary>Do you offer annual discounts?</summary>
+          <p>
+            Annual contracts on Starter and Pro receive two months free (effective ~17%
+            discount). Enterprise pricing is always annual and is negotiated based on
+            event volume, contractual terms, and signing-key delivery model.
+          </p>
+        </details>
+        <details>
+          <summary>What happens if I exceed my included events?</summary>
+          <p>
+            On Free, additional events are dropped at the ingest edge — we never charge
+            for usage you didn't agree to. On Starter, Pro, and Enterprise, additional
+            events are metered at the per-tier overage rate and added to the next
+            invoice. You can set a hard cap in the console if you prefer the Free-tier
+            behavior at a paid plan.
+          </p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .hero { padding: 4rem 0 2rem; background: linear-gradient(180deg, #f7faff 0%, #ffffff 100%); }
+  .lede { font-size: 1.15rem; color: var(--fg-muted); max-width: 620px; margin-top: 1rem; }
+
+  .tiers { padding: 2rem 0 4rem; }
+  .tier-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+  .tier {
+    position: relative;
+    padding: 1.75rem 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+  }
+  .tier-featured {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .badge {
+    position: absolute;
+    top: -12px;
+    left: 1.25rem;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .tier h2 {
+    font-size: 1.1rem;
+    margin: 0 0 0.5rem;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .price { margin-bottom: 0.5rem; }
+  .amount { font-size: 2rem; font-weight: 700; }
+  .cadence { color: var(--fg-muted); margin-left: 0.4rem; font-size: 0.9rem; }
+  .blurb { color: var(--fg-muted); font-size: 0.9rem; margin: 0 0 1rem; }
+  .features-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.5rem;
+    font-size: 0.92rem;
+    flex: 1;
+  }
+  .features-list li {
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .features-list li:last-child { border-bottom: none; }
+  .features-list .muted { color: var(--fg-muted); }
+
+  .compare { padding: 3rem 0; background: var(--bg-alt); }
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-top: 1.5rem;
+  }
+  th, td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.92rem;
+  }
+  thead th {
+    background: var(--bg-alt);
+    font-weight: 600;
+  }
+  td { text-align: center; }
+  th[scope="row"] { font-weight: 500; color: var(--fg-muted); text-align: left; }
+  .yes { color: var(--accent); font-weight: 700; }
+  .no { color: var(--fg-muted); }
+
+  .faq { padding: 4rem 0; }
+  details {
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 0;
+  }
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1.05rem;
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: '+'; float: right; color: var(--fg-muted); }
+  details[open] summary::after { content: '−'; }
+  details p { color: var(--fg-muted); margin: 0.75rem 0 0; max-width: 720px; }
+
+  @media (max-width: 900px) {
+    .tier-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 520px) {
+    .tier-grid { grid-template-columns: 1fr; }
+  }
+</style>

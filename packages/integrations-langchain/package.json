@@ -1,0 +1,33 @@
+{
+  "name": "@veritrail/integrations-langchain",
+  "version": "0.1.0",
+  "description": "LangChain JS callback handler that streams agent lifecycle events into Veritrail. Duck-typed against BaseCallbackHandler so users bring their own LangChain version.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@veritrail/sdk": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

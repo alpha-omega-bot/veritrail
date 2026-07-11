@@ -1,6 +1,7 @@
 import { BudgetStateStatus } from '../status.tsx';
 import { clamp, formatUsd } from '../format.ts';
 import { getSpendStatus, useAsync } from '../api.ts';
+import { MetricSkeleton, TableSkeleton } from '../LoadingSkeleton.tsx';
 import type { SpendStatus } from '../types.ts';
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
@@ -10,7 +11,6 @@ import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
 import ProgressBar from '@cloudscape-design/components/progress-bar';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import Spinner from '@cloudscape-design/components/spinner';
 import Table from '@cloudscape-design/components/table';
 
 function usagePercent(budget: SpendStatus): number {
@@ -51,7 +51,19 @@ export function SpendView() {
             The console could not reach the Veritrail API, so it is displaying sample data.
           </Alert>
         )}
-        {loading && <Spinner size="large" />}
+        {loading && (
+          <>
+            <Container>
+              <ColumnLayout columns={4} variant="text-grid">
+                <MetricSkeleton />
+                <MetricSkeleton />
+                <MetricSkeleton />
+                <MetricSkeleton />
+              </ColumnLayout>
+            </Container>
+            <TableSkeleton rows={3} />
+          </>
+        )}
         {!loading && error !== null && (
           <Alert type="error" header="Failed to load spend">
             {error}

@@ -2,6 +2,7 @@ import { formatDateTime } from '../format.ts';
 import { getIncident, useAsync } from '../api.ts';
 import { mockCorrelationIds } from '../mocks.ts';
 import { SeverityStatus } from '../status.tsx';
+import { MetricSkeleton } from '../LoadingSkeleton.tsx';
 import { useState } from 'react';
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
@@ -13,7 +14,6 @@ import Header from '@cloudscape-design/components/header';
 import Select from '@cloudscape-design/components/select';
 import type { SelectProps } from '@cloudscape-design/components/select';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import Spinner from '@cloudscape-design/components/spinner';
 
 const CORRELATION_OPTIONS: SelectProps.Option[] = mockCorrelationIds.map((id) => ({
   value: id,
@@ -57,7 +57,7 @@ export function ForensicsView() {
         )}
 
         <Container>
-          <FormField label="Correlation id">
+          <FormField label="Correlation id" description="Select an incident to view its timeline">
             <Select
               selectedOption={selected}
               onChange={({ detail }: { detail: SelectProps.ChangeDetail }) =>
@@ -69,7 +69,18 @@ export function ForensicsView() {
           </FormField>
         </Container>
 
-        {loading && <Spinner size="large" />}
+        {loading && (
+          <>
+            <Container>
+              <ColumnLayout columns={4} variant="text-grid">
+                <MetricSkeleton />
+                <MetricSkeleton />
+                <MetricSkeleton />
+                <MetricSkeleton />
+              </ColumnLayout>
+            </Container>
+          </>
+        )}
         {!loading && error !== null && (
           <Alert type="error" header="Failed to reconstruct incident">
             {error}

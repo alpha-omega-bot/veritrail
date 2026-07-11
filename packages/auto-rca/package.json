@@ -1,0 +1,27 @@
+{
+  "name": "@veritrail/auto-rca",
+  "version": "0.1.0",
+  "description": "AI-generated Root Cause Analysis for Veritrail incidents. Pipes the forensics output through a pluggable LLM (Claude by default) and produces a structured RCA plus a proposed policy that the policy-simulator can validate against real history.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

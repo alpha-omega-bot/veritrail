@@ -1,6 +1,7 @@
 import { getAuditSummary, getHealth, getSpendStatus, getVendorRisk, useAsync } from '../api.ts';
-import { formatDateTime, formatUsd, shortHash } from '../format.ts';
+import { formatDateTime, formatDateTimeRelative, formatUsd, shortHash } from '../format.ts';
 import { IntegrityStatus, RiskBandStatus } from '../status.tsx';
+import { MetricSkeleton } from '../LoadingSkeleton.tsx';
 import type { RiskBand } from '../types.ts';
 import Alert from '@cloudscape-design/components/alert';
 import Box from '@cloudscape-design/components/box';
@@ -10,7 +11,6 @@ import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import Spinner from '@cloudscape-design/components/spinner';
 
 const BAND_RANK: Record<RiskBand, number> = { low: 0, moderate: 1, elevated: 2, high: 3 };
 
@@ -65,7 +65,25 @@ export function OverviewView() {
           </Alert>
         )}
 
-        {loading && <Spinner size="large" />}
+        {loading && (
+          <>
+            <Container header={<Header variant="h2">Audit ledger integrity</Header>}>
+              <ColumnLayout columns={3} variant="text-grid">
+                <MetricSkeleton />
+                <MetricSkeleton />
+                <MetricSkeleton />
+              </ColumnLayout>
+            </Container>
+            <Container>
+              <ColumnLayout columns={4} variant="text-grid">
+                <MetricSkeleton />
+                <MetricSkeleton />
+                <MetricSkeleton />
+                <MetricSkeleton />
+              </ColumnLayout>
+            </Container>
+          </>
+        )}
 
         {!loading && summary.error !== null && (
           <Alert type="error" header="Failed to load overview">
@@ -87,7 +105,14 @@ export function OverviewView() {
                     label: 'Last hash',
                     value: <Box variant="code">{shortHash(summary.data.lastHash)}</Box>,
                   },
-                  { label: 'Last event', value: formatDateTime(summary.data.lastEventAt) },
+                  {
+                    label: 'Last event',
+                    value: (
+                      <span title={formatDateTime(summary.data.lastEventAt)}>
+                        {formatDateTimeRelative(summary.data.lastEventAt)}
+                      </span>
+                    ),
+                  },
                 ]}
               />
             </Container>

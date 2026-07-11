@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: veritrail-server-config
+  namespace: veritrail
+data:
+  VERITRAIL_PORT: '8787'
+  VERITRAIL_LEDGER_PATH: '/data/veritrail-ledger.jsonl'
+  NODE_ENV: 'production'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: veritrail-server-secrets
+  namespace: veritrail
+type: Opaque
+stringData:
+  VERITRAIL_API_KEY: 'changeme-generate-secure-key'
+  VERITRAIL_SIGNER_SECRET: 'changeme-generate-secure-secret'

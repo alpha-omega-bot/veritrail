@@ -1,0 +1,104 @@
+---
+const year = new Date().getFullYear();
+---
+<footer class="footer">
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="6" fill="#0972d3"/>
+          <path d="M8 9 L16 23 L24 9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Veritrail</span>
+      </div>
+      <p class="tagline">Trust &amp; control plane for AI agents.</p>
+    </div>
+    <div class="footer-cols">
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="/docs">Docs</a></li>
+          <li><a href="/pricing">Pricing</a></li>
+          <li><a href="https://console.veritrail.io/signup">Start free</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <ul>
+          <li><a href="/security">Security</a></li>
+          <li><a href="/blog">Blog</a></li>
+          <li><a href="/security.txt">security.txt</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Legal</h4>
+        <ul>
+          <li><a href="/terms">Terms</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/dpa">DPA</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="container copyright">
+    &copy; {year} Veritrail, Inc. All rights reserved.
+  </div>
+</footer>
+<style>
+  .footer {
+    border-top: 1px solid var(--border);
+    background: var(--bg-alt);
+    padding: 3rem 0 1.5rem;
+    margin-top: 4rem;
+  }
+  .footer-inner {
+    display: grid;
+    grid-template-columns: 1.5fr 2fr;
+    gap: 2.5rem;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 700;
+    font-size: 1rem;
+  }
+  .tagline {
+    color: var(--fg-muted);
+    font-size: 0.9rem;
+    margin: 0.5rem 0 0;
+  }
+  .footer-cols {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+  .footer-cols h4 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    margin: 0 0 0.75rem;
+  }
+  .footer-cols ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .footer-cols li { margin-bottom: 0.4rem; }
+  .footer-cols a {
+    color: var(--fg);
+    font-size: 0.9rem;
+  }
+  .copyright {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+  }
+  @media (max-width: 640px) {
+    .footer-inner { grid-template-columns: 1fr; gap: 1.5rem; }
+    .footer-cols { grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  }
+</style>

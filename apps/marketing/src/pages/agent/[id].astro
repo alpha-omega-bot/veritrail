@@ -1,0 +1,396 @@
+---
+/**
+ * Public agent profile page. Renders a server-side fetch of
+ * `GET /api/v1/agent/{id}/reputation` and presents the resulting
+ * `AgentReputationProfile` (badge, composite score, headline metrics, factor
+ * breakdown) as a search-indexable HTML document.
+ *
+ * The page is opt-in SSR — it sits in an otherwise static Astro build so the
+ * surrounding marketing site stays trivially deployable while this route
+ * fetches live data per request.
+ */
+
+import Base from '../../layouts/Base.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+
+export const prerender = false;
+
+interface ReputationFactor {
+  readonly name: string;
+  readonly impact: number;
+  readonly reason: string;
+}
+
+interface AgentReputationProfile {
+  readonly agentId: string;
+  readonly totalDecisions: number;
+  readonly totalActions: number;
+  readonly denialRate: number;
+  readonly spendUsdMinor: number;
+  readonly incidentCount: number;
+  readonly verifiedSince: string;
+  readonly score: number;
+  readonly badge: 'verified' | 'caution' | 'unverified';
+  readonly factors: ReadonlyArray<ReputationFactor>;
+}
+
+const { id } = Astro.params;
+const agentId = id ?? '';
+
+const apiBase = process.env['VERITRAIL_API'] ?? 'http://localhost:8787';
+
+let profile: AgentReputationProfile | null = null;
+let fetchError: string | null = null;
+
+if (agentId !== '') {
+  try {
+    const response = await fetch(
+      `${apiBase}/api/v1/agent/${encodeURIComponent(agentId)}/reputation`,
+      { headers: { accept: 'application/json' } },
+    );
+    if (!response.ok) {
+      fetchError = `Reputation API returned ${response.status}.`;
+    } else {
+      profile = (await response.json()) as AgentReputationProfile;
+    }
+  } catch (err) {
+    fetchError = err instanceof Error ? err.message : 'Unknown error fetching reputation.';
+  }
+}
+
+const hasEvents =
+  profile !== null &&
+  (profile.totalDecisions > 0 ||
+    profile.totalActions > 0 ||
+    profile.incidentCount > 0 ||
+    profile.spendUsdMinor > 0 ||
+    profile.verifiedSince !== '');
+
+const badgeColors: Record<AgentReputationProfile['badge'], string> = {
+  verified: '#22c55e',
+  caution: '#ef4444',
+  unverified: '#9ca3af',
+};
+
+const pageTitle = `Agent ${agentId} - Veritrail verified`;
+const pageDescription =
+  profile !== null && hasEvents
+    ? `Veritrail reputation profile for agent ${agentId}: score ${Math.round(profile.score)}, badge ${profile.badge}.`
+    : `Veritrail reputation profile for agent ${agentId}.`;
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatUsd(amountMinor: number): string {
+  const dollars = amountMinor / 100;
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(dollars);
+}
+
+function formatDate(iso: string): string {
+  if (iso === '') return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toISOString().slice(0, 10);
+}
+
+const jsonLd =
+  profile !== null
+    ? {
+        '@context': 'https://schema.org',
+        '@type': 'SoftwareApplication',
+        name: `Veritrail agent ${profile.agentId}`,
+        applicationCategory: 'BusinessApplication',
+        operatingSystem: 'Cross-platform',
+        identifier: profile.agentId,
+        url: `https://veritrail.io/agent/${profile.agentId}`,
+        description: pageDescription,
+        offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+        aggregateRating: hasEvents
+          ? {
+              '@type': 'AggregateRating',
+              ratingValue: (profile.score / 20).toFixed(2),
+              bestRating: '5',
+              worstRating: '0',
+              ratingCount: Math.max(1, profile.totalDecisions + profile.totalActions),
+            }
+          : undefined,
+      }
+    : null;
+---
+<Base title={pageTitle} description={pageDescription}>
+  <Nav />
+
+  {jsonLd !== null && (
+    <script
+      type="application/ld+json"
+      is:inline
+      set:html={JSON.stringify(jsonLd)}
+    />
+  )}
+
+  <main>
+    {fetchError !== null && (
+      <section class="error">
+        <div class="container">
+          <h1>Agent {agentId}</h1>
+          <p class="lede">We could not load this agent's reputation right now.</p>
+          <p class="muted">{fetchError}</p>
+        </div>
+      </section>
+    )}
+
+    {fetchError === null && profile !== null && !hasEvents && (
+      <section class="empty">
+        <div class="container">
+          <h1>Agent {agentId}</h1>
+          <p class="lede">This agent has not been observed yet.</p>
+          <p class="muted">
+            Once the agent emits its first decision or action to the Veritrail
+            ledger, its public reputation profile will populate here.
+          </p>
+        </div>
+      </section>
+    )}
+
+    {fetchError === null && profile !== null && hasEvents && (
+      <>
+        <section class="hero">
+          <div class="container hero-inner">
+            <div class="hero-text">
+              <div class={`badge badge-${profile.badge}`} style={`--badge-color: ${badgeColors[profile.badge]}`}>
+                <span class="dot" aria-hidden="true"></span>
+                <span class="badge-label">{profile.badge}</span>
+              </div>
+              <h1>Agent {profile.agentId} - Veritrail verified</h1>
+              <p class="lede">
+                Composite reputation score derived from the tamper-evident
+                Veritrail ledger. Anyone with ledger read access can recompute
+                this score offline.
+              </p>
+            </div>
+            <div class="score-block" aria-label="Reputation score">
+              <div class="score-value">{Math.round(profile.score)}</div>
+              <div class="score-out-of">/ 100</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="metrics">
+          <div class="container">
+            <h2>Headline metrics</h2>
+            <div class="metric-grid">
+              <article class="metric">
+                <div class="metric-label">Total decisions</div>
+                <div class="metric-value">{profile.totalDecisions.toLocaleString('en-US')}</div>
+              </article>
+              <article class="metric">
+                <div class="metric-label">Total actions</div>
+                <div class="metric-value">{profile.totalActions.toLocaleString('en-US')}</div>
+              </article>
+              <article class="metric">
+                <div class="metric-label">Denial rate</div>
+                <div class="metric-value">{formatPercent(profile.denialRate)}</div>
+              </article>
+              <article class="metric">
+                <div class="metric-label">Lifetime spend</div>
+                <div class="metric-value">{formatUsd(profile.spendUsdMinor)}</div>
+              </article>
+              <article class="metric">
+                <div class="metric-label">Incidents</div>
+                <div class="metric-value">{profile.incidentCount.toLocaleString('en-US')}</div>
+              </article>
+              <article class="metric">
+                <div class="metric-label">Verified since</div>
+                <div class="metric-value">{formatDate(profile.verifiedSince)}</div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="factors">
+          <div class="container">
+            <h2>Score factors</h2>
+            {profile.factors.length === 0 ? (
+              <p class="muted">
+                No factors moved the score off the neutral baseline of 50.
+              </p>
+            ) : (
+              <ul class="factor-list">
+                {profile.factors.map((factor) => (
+                  <li class="factor">
+                    <div class={`factor-impact ${factor.impact >= 0 ? 'pos' : 'neg'}`}>
+                      {factor.impact >= 0 ? `+${factor.impact}` : factor.impact}
+                    </div>
+                    <div class="factor-body">
+                      <div class="factor-name"><code>{factor.name}</code></div>
+                      <div class="factor-reason">{factor.reason}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+      </>
+    )}
+
+    <section class="explain">
+      <div class="container">
+        <h2>What is this?</h2>
+        <p>
+          This profile is derived from the Veritrail audit ledger — a
+          tamper-evident, hash-chained record of every action this agent has
+          taken in production. Read more in the
+          <a href="/docs#reputation">reputation documentation</a>.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <Footer />
+</Base>
+
+<style>
+  .hero {
+    padding: 4rem 0 2rem;
+    background: linear-gradient(180deg, #f7faff 0%, #ffffff 100%);
+  }
+  .hero-inner {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2rem;
+    align-items: center;
+  }
+  .hero-text h1 {
+    margin: 0.5rem 0 1rem;
+    word-break: break-all;
+  }
+  .lede {
+    font-size: 1.1rem;
+    color: var(--fg-muted);
+    max-width: 620px;
+    margin: 0;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg);
+  }
+  .badge .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--badge-color);
+  }
+  .score-block {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    padding: 1.5rem 2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #fff;
+  }
+  .score-value {
+    font-size: 3.5rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--accent);
+  }
+  .score-out-of {
+    color: var(--fg-muted);
+    font-size: 1.1rem;
+  }
+
+  .metrics { padding: 3rem 0; }
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .metric {
+    padding: 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #fff;
+  }
+  .metric-label {
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+  .metric-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+  }
+
+  .factors { padding: 2rem 0 3rem; background: var(--bg-alt); }
+  .factor-list {
+    list-style: none;
+    padding: 0;
+    margin: 1.5rem 0 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  .factor {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  .factor-impact {
+    font-size: 1.5rem;
+    font-weight: 700;
+    text-align: center;
+  }
+  .factor-impact.pos { color: #16a34a; }
+  .factor-impact.neg { color: #dc2626; }
+  .factor-name { font-weight: 600; margin-bottom: 0.2rem; }
+  .factor-name code {
+    background: var(--bg-alt);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+  }
+  .factor-reason { color: var(--fg-muted); font-size: 0.95rem; }
+
+  .explain { padding: 3rem 0; }
+  .explain p { color: var(--fg-muted); max-width: 620px; }
+
+  .empty, .error {
+    padding: 5rem 0;
+    text-align: center;
+  }
+  .empty h1, .error h1 { word-break: break-all; }
+  .muted { color: var(--fg-muted); }
+
+  @media (max-width: 800px) {
+    .hero-inner { grid-template-columns: 1fr; }
+    .metric-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 480px) {
+    .metric-grid { grid-template-columns: 1fr; }
+    .factor { grid-template-columns: 60px 1fr; }
+  }
+</style>
