@@ -9,9 +9,10 @@ import { ArrayBackedEventStore } from './array-store.js';
  */
 export class InMemoryEventStore extends ArrayBackedEventStore {
   async append(record: LedgerRecord): Promise<Result<LedgerRecord, VeritrailError>> {
-    const check = this.checkAppend(record);
+    const stored = this.cloneRecord(record);
+    const check = this.checkAppend(stored);
     if (!check.ok) return check;
-    this.records.push(record);
-    return ok(record);
+    this.records.push(stored);
+    return ok(this.cloneRecord(stored));
   }
 }

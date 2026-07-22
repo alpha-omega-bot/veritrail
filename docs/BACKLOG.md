@@ -150,6 +150,12 @@ GA modules, update maturity in `README.md`/`ROADMAP.md`/`docs/concepts/capabilit
 
 ## P2.5 — Cross-cutting correctness (smaller, do alongside module work)
 
+- [x] **Array-backed store record aliasing** allowed callers to mutate and
+      recursively re-hash committed unsigned history through append results or
+      read APIs while `verify()` still passed. In-memory and file stores now
+      retain detached snapshots and return detached snapshots from every
+      write/read boundary. (review: core/critical)
+
 - [x] **SDK client** throws raw `SyntaxError` on non-JSON HTTP bodies →
       wrap to `VeritrailError` (uniform-error contract). (review: medium) — partially
       addressed in bootstrap; verified with regression tests.
@@ -214,6 +220,16 @@ tests) — they are done:
 ---
 
 ## Session log
+
+- **2026-07-22** — Fixed a critical trust-core aliasing vulnerability in the
+  array-backed event stores. `InMemoryEventStore` and `FileEventStore` previously
+  retained caller-owned record objects and returned live nested objects from
+  append/read APIs; a caller could mutate an event, recursively re-hash an
+  unsigned chain, and make `verify()` accept rewritten in-memory history. Stores
+  now clone records before retention and clone every append/read result (`head`,
+  `getBySeq`, `readAll`, `query`, and batch paths). An adversarial before/after
+  probe confirmed the exploit and then confirmed isolation for both stores.
+  **Next:** triage the separately identified high-severity hardening findings.
 
 - **2026-06-30** — Added `@veritrail/provider-monitors`, a dependency-light
   package with `MonitorSource` adapters for vendor risk feeds (HTTP status

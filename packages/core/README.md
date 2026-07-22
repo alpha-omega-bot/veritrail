@@ -50,7 +50,9 @@ console.log(report.ok, report.head); // true, <chain head hash>
 
 - **Tamper-evident**: `verify()` recomputes every hash and checks every link.
   A single altered record surfaces as one `hash_mismatch`; re-hashing it surfaces
-  as a downstream `chain_break`.
+  as a downstream `chain_break`. The bundled stores detach records at every
+  write/read boundary, so mutating an append result or query snapshot cannot
+  rewrite committed in-memory history.
 - **Snapshot-verifiable**: `Ledger.verifyRecords(records)` verifies an
   already-read record snapshot with the ledger's signer configuration, so
   projections can aggregate and verify the same view.
