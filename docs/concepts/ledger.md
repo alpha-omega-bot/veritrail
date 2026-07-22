@@ -83,7 +83,10 @@ Appends are serialized through a `Mutex`, so the chain is always linear and
 gap-free at write time. The persistence port (`EventStore`) independently
 re-checks the append-only invariant — a record may only land at `head.seq + 1`
 with `prevHash === head.hash`, otherwise the store returns a `CONFLICT`
-(`packages/core/src/storage/array-store.ts`).
+(`packages/core/src/storage/array-store.ts`). Array-backed stores also retain and
+return detached record snapshots at every boundary, preventing callers from
+rewriting committed in-memory history by mutating append results or query
+responses.
 
 ## Canonicalization
 

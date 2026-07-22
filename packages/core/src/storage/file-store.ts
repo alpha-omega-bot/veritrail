@@ -207,31 +207,33 @@ export class FileEventStore extends ArrayBackedEventStore {
   }
 
   async append(record: LedgerRecord): Promise<Result<LedgerRecord, VeritrailError>> {
-    const check = this.checkAppend(record);
+    const stored = this.cloneRecord(record);
+    const check = this.checkAppend(stored);
     if (!check.ok) return check;
     try {
-      await appendLineDurably(this.#path, `${JSON.stringify(record)}\n`);
+      await appendLineDurably(this.#path, `${JSON.stringify(stored)}\n`);
     } catch (cause) {
       return { ok: false, error: storageError(`failed to append to ${this.#path}`, cause) };
     }
-    this.records.push(record);
-    return ok(record);
+    this.records.push(stored);
+    return ok(this.cloneRecord(stored));
   }
 
   override async appendBatch(
     records: readonly LedgerRecord[],
   ): Promise<Result<LedgerRecord[], VeritrailError>> {
     if (records.length === 0) return ok([]);
-    const check = this.checkBatch(records);
+    const stored = this.cloneRecords(records);
+    const check = this.checkBatch(stored);
     if (!check.ok) return check;
-    const payload = records.map((record) => `${JSON.stringify(record)}\n`).join('');
+    const payload = stored.map((record) => `${JSON.stringify(record)}\n`).join('');
     try {
       await appendBatchDurably(this.#path, payload);
     } catch (cause) {
       return { ok: false, error: storageError(`failed to append batch to ${this.#path}`, cause) };
     }
-    this.records.push(...records);
-    return ok([...records]);
+    this.records.push(...stored);
+    return ok(this.cloneRecords(stored));
   }
 
   /** The file this store persists to. */

@@ -24,7 +24,9 @@ export interface EventQuery {
 /**
  * Persistence port for the append-only ledger. Adapters MUST enforce the
  * append-only invariant: a record may only be appended at `head.seq + 1` with
- * `prevHash === head.hash`; anything else is a `CONFLICT`. This keeps integrity
+ * `prevHash === head.hash`; anything else is a `CONFLICT`. Adapters that retain
+ * records in process must snapshot inputs before retention and must never expose
+ * retained object references through write/read APIs. This keeps integrity
  * guarantees independent of any single adapter implementation.
  */
 export interface EventStore {

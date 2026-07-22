@@ -12,6 +12,18 @@ import { applyQuery } from './query.js';
 export abstract class ArrayBackedEventStore implements EventStore {
   protected readonly records: LedgerRecord[] = [];
 
+  /**
+   * Detach records at every store boundary so callers can never mutate the
+   * append-only in-memory chain through a record returned from an API.
+   */
+  protected cloneRecord(record: LedgerRecord): LedgerRecord {
+    return structuredClone(record);
+  }
+
+  protected cloneRecords(records: readonly LedgerRecord[]): LedgerRecord[] {
+    return records.map((record) => this.cloneRecord(record));
+  }
+
   abstract append(record: LedgerRecord): Promise<Result<LedgerRecord, VeritrailError>>;
 
   /** The seq and prevHash a valid next append must carry. */
@@ -81,26 +93,29 @@ export abstract class ArrayBackedEventStore implements EventStore {
     records: readonly LedgerRecord[],
   ): Promise<Result<LedgerRecord[], VeritrailError>> {
     if (records.length === 0) return ok([]);
-    const check = this.checkBatch(records);
+    const stored = this.cloneRecords(records);
+    const check = this.checkBatch(stored);
     if (!check.ok) return check;
-    this.records.push(...records);
-    return ok([...records]);
+    this.records.push(...stored);
+    return ok(this.cloneRecords(stored));
   }
 
   async head(): Promise<LedgerRecord | null> {
-    return this.records.at(-1) ?? null;
+    const head = this.records.at(-1);
+    return head === undefined ? null : this.cloneRecord(head);
   }
 
   async getBySeq(seq: number): Promise<LedgerRecord | null> {
-    return this.records[seq - 1] ?? null;
+    const record = this.records[seq - 1];
+    return record === undefined ? null : this.cloneRecord(record);
   }
 
   async readAll(): Promise<LedgerRecord[]> {
-    return [...this.records];
+    return this.cloneRecords(this.records);
   }
 
   async query(query: EventQuery): Promise<LedgerRecord[]> {
-    return applyQuery(this.records, query);
+    return this.cloneRecords(applyQuery(this.records, query));
   }
 
   async count(): Promise<number> {
