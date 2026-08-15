@@ -9,7 +9,7 @@ Audit · Rollback · Permissions · Spend Guard · Incident Forensics · Evidenc
 
 [![CI](https://github.com/veritrail/veritrail/actions/workflows/ci.yml/badge.svg)](https://github.com/veritrail/veritrail/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D20.11-brightgreen.svg)](./.nvmrc)
+[![Node](https://img.shields.io/badge/node-%3E%3D20.19-brightgreen.svg)](./.nvmrc)
 
 </div>
 
@@ -64,7 +64,8 @@ they are **engines and projections over that one ledger.**
 ## Quickstart
 
 ```bash
-# Requires Node >= 20.11 and pnpm (via corepack: `corepack enable`).
+# Requires Node >= 20.19 (or >= 22.12) and pnpm (via corepack: `corepack enable`).
+# Published packages support Node >= 20.11; the dev toolchain needs the newer floor.
 pnpm install
 pnpm run verify          # format:check + lint + typecheck + test
 ```
@@ -72,32 +73,41 @@ pnpm run verify          # format:check + lint + typecheck + test
 Use the core ledger directly:
 
 ```ts
-import { createInMemoryLedger } from '@veritrail/core';
+import {
+  DefaultIdGenerator,
+  createInMemoryLedger,
+  noopLogger,
+  systemClock,
+  type ModuleContext,
+} from '@veritrail/core';
 import { createPermissionsModule } from '@veritrail/permissions';
-import { createSpendGuardModule } from '@veritrail/spend-guard';
 import { createAuditModule } from '@veritrail/audit';
 
 const ledger = createInMemoryLedger();
-const ctx = {
+const ctx: ModuleContext = {
   ledger,
-  clock: { now: () => Date.now() },
-  ids: /* IdGenerator */ undefined!,
-  logger: /* Logger */ undefined!,
+  clock: systemClock,
+  ids: new DefaultIdGenerator(systemClock),
+  logger: noopLogger, // or `new ConsoleLogger({ component: 'my-app' })`
 };
 
 const permissions = createPermissionsModule(ctx); // deny-by-default
 permissions.addPolicy({
+  id: 'pol-safe-tools',
   name: 'allow safe tools',
   effect: 'allow',
   match: { actionTypes: ['tool.*'] },
 });
 
 const decision = permissions.evaluate({ id: 'a1', actorId: 'agent-7', type: 'tool.search' });
-// → { effect: 'allow', matchedPolicyId: '…', reason: '…' }
+// → { effect: 'allow', matchedPolicyId: 'pol-safe-tools', reason: '…' }
 
 const audit = createAuditModule(ctx);
-console.log(await audit.verify()); // { ok: true, head: '…', … }
+console.log(await audit.verify()); // { ok: true, checked: 0, head: null, issues: [] }
 ```
+
+Prefer `createPlatform()` from [`@veritrail/server`](./packages/server) when you
+want all eight engines wired to one ledger with sensible defaults.
 
 See [`examples/`](./examples) for runnable end-to-end flows, and each package's
 README for its full API.

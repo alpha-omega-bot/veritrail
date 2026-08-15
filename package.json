@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=20.11.0"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "packageManager": "pnpm@9.15.0",
   "scripts": {
@@ -24,15 +24,29 @@
     "setup:hooks": "git config core.hooksPath .githooks && echo \"Veritrail git hooks enabled (.githooks).\"",
     "clean": "pnpm -r exec rm -rf dist .turbo node_modules/.cache && rm -rf node_modules"
   },
+  "pnpm": {
+    "packageExtensions": {
+      "@cloudscape-design/components": {
+        "peerDependencies": {
+          "react-dom": ">=16.8.0"
+        }
+      },
+      "@cloudscape-design/component-toolkit": {
+        "peerDependencies": {
+          "react-dom": ">=16.8.0"
+        }
+      }
+    }
+  },
   "devDependencies": {
-    "@eslint/js": "^9.17.0",
-    "@types/node": "^22.10.2",
-    "@vitest/coverage-v8": "^2.1.8",
-    "eslint": "^9.17.0",
-    "prettier": "^3.4.2",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "typescript-eslint": "^8.18.1",
-    "vitest": "^2.1.8"
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.10"
   }
 }

@@ -3,9 +3,7 @@ import type { RemoteSignerClient } from '@veritrail/core';
 import { ProviderSignerError, signatureBuffer } from './errors.js';
 
 export type HsmSignMechanism =
-  | string
-  | number
-  | { readonly name?: string; readonly mechanism?: string | number };
+  string | number | { readonly name?: string; readonly mechanism?: string | number };
 
 export interface HsmSession {
   sign(

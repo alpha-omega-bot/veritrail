@@ -1,8 +1,22 @@
-import { getAuditSummary, getHealth, getSpendStatus, getVendorRisk, useAsync } from '../api.ts';
-import { formatDateTime, formatUsd, shortHash } from '../format.ts';
+import {
+  getAuditSummary,
+  getHealth,
+  getSpendStatus,
+  getVendorRisk,
+  useAsync,
+  type ApiError,
+} from '../api.ts';
+import {
+  EMPTY,
+  formatCount,
+  formatDateTime,
+  formatDuration,
+  formatMoney,
+  shortHash,
+} from '../format.ts';
+import { CredentialPanel, ErrorAlert, Loading, Metric } from '../components.tsx';
 import { IntegrityStatus, RiskBandStatus } from '../status.tsx';
-import type { RiskBand } from '../types.ts';
-import Alert from '@cloudscape-design/components/alert';
+import type { Money, SpendStatus } from '../types.ts';
 import Box from '@cloudscape-design/components/box';
 import ColumnLayout from '@cloudscape-design/components/column-layout';
 import Container from '@cloudscape-design/components/container';
@@ -10,24 +24,34 @@ import ContentLayout from '@cloudscape-design/components/content-layout';
 import Header from '@cloudscape-design/components/header';
 import KeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import SpaceBetween from '@cloudscape-design/components/space-between';
-import Spinner from '@cloudscape-design/components/spinner';
 
-const BAND_RANK: Record<RiskBand, number> = { low: 0, moderate: 1, elevated: 2, high: 3 };
-
-function Metric({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
-  return (
-    <div>
-      <Box variant="awsui-key-label">{label}</Box>
-      <Box variant="h2" padding={{ top: 'xxs' }}>
-        {value}
-      </Box>
-      {hint !== undefined && (
-        <Box variant="small" color="text-body-secondary">
-          {hint}
-        </Box>
-      )}
-    </div>
+/**
+ * Total spend and limit across budgets, but only when every budget shares one
+ * currency. Summing minor units across currencies would be meaningless, so mixed
+ * portfolios report `null` and the UI shows a per-budget breakdown instead.
+ */
+function aggregateSpend(budgets: readonly SpendStatus[]): { spent: Money; limit: Money } | null {
+  if (budgets.length === 0) return null;
+  const currency = budgets[0]!.budget.limit.currency;
+  const uniform = budgets.every(
+    (b) => b.budget.limit.currency === currency && b.spent.currency === currency,
   );
+  if (!uniform) return null;
+  return {
+    spent: {
+      currency,
+      amountMinor: budgets.reduce((total, b) => total + b.spent.amountMinor, 0),
+    },
+    limit: {
+      currency,
+      amountMinor: budgets.reduce((total, b) => total + b.budget.limit.amountMinor, 0),
+    },
+  };
+}
+
+/** True when any request failed because credentials are missing or inadequate. */
+function needsCredentials(errors: readonly (ApiError | null)[]): boolean {
+  return errors.some((e) => e !== null && (e.kind === 'unauthorized' || e.kind === 'forbidden'));
 }
 
 export function OverviewView() {
@@ -37,90 +61,142 @@ export function OverviewView() {
   const health = useAsync(getHealth, []);
 
   const loading = summary.loading || spend.loading || vendors.loading || health.loading;
-  const usingMock = summary.fromMock || spend.fromMock || vendors.fromMock || health.fromMock;
+  const errors = [summary.error, spend.error, vendors.error, health.error];
 
-  const topVendor =
-    vendors.data?.vendors.reduce<(typeof vendors.data.vendors)[number] | null>((worst, v) => {
-      if (worst === null) return v;
-      return BAND_RANK[v.band] > BAND_RANK[worst.band] || v.score > worst.score ? v : worst;
-    }, null) ?? null;
+  const reloadAll = () => {
+    summary.reload();
+    spend.reload();
+    vendors.reload();
+    health.reload();
+  };
+
+  // The server sorts assessments riskiest-first, so the head is the top risk.
+  const topVendor = vendors.data !== null && vendors.data.length > 0 ? vendors.data[0]! : null;
+  const totals = spend.data !== null ? aggregateSpend(spend.data) : null;
+  const exceededCount = spend.data?.filter((b) => b.exceeded).length ?? 0;
 
   return (
     <ContentLayout
       header={
         <Header
           variant="h1"
-          description={`Ledger integrity, spend, and vendor risk at a glance${
-            health.data && !health.fromMock ? ` · API ${health.data.version}` : ''
-          }.`}
+          description={
+            health.data !== null
+              ? `Ledger integrity, spend, and vendor risk. API ${health.data.version}, up ${formatDuration(health.data.uptimeMs)}.`
+              : 'Ledger integrity, spend, and vendor risk at a glance.'
+          }
         >
           Overview
         </Header>
       }
     >
       <SpaceBetween size="l">
-        {usingMock && (
-          <Alert type="info" header="Showing sample data">
-            The console could not reach the Veritrail API, so it is displaying sample data.
-          </Alert>
-        )}
+        {needsCredentials(errors) && <CredentialPanel onChange={reloadAll} />}
 
-        {loading && <Spinner size="large" />}
+        {loading && <Loading label="Loading overview" />}
 
-        {!loading && summary.error !== null && (
-          <Alert type="error" header="Failed to load overview">
-            {summary.error}
-          </Alert>
-        )}
-
-        {!loading && summary.error === null && summary.data !== null && (
-          <>
+        {!loading && (
+          <SpaceBetween size="l">
+            {/* Integrity is reported only from a real verification result. */}
             <Container header={<Header variant="h2">Audit ledger integrity</Header>}>
-              <KeyValuePairs
-                columns={3}
-                items={[
-                  {
-                    label: 'Integrity',
-                    value: <IntegrityStatus ok={summary.data.integrityOk} />,
-                  },
-                  {
-                    label: 'Last hash',
-                    value: <Box variant="code">{shortHash(summary.data.lastHash)}</Box>,
-                  },
-                  { label: 'Last event', value: formatDateTime(summary.data.lastEventAt) },
-                ]}
-              />
+              {summary.error !== null ? (
+                <ErrorAlert error={summary.error} onRetry={summary.reload} />
+              ) : (
+                summary.data !== null && (
+                  <KeyValuePairs
+                    columns={4}
+                    items={[
+                      {
+                        label: 'Chain integrity',
+                        value: <IntegrityStatus ok={summary.data.integrityOk} />,
+                      },
+                      {
+                        label: 'Head hash',
+                        value: (
+                          <Box variant="code">
+                            <span title={summary.data.head ?? undefined}>
+                              {shortHash(summary.data.head)}
+                            </span>
+                          </Box>
+                        ),
+                      },
+                      { label: 'First event', value: formatDateTime(summary.data.firstAt) },
+                      { label: 'Latest event', value: formatDateTime(summary.data.lastAt) },
+                    ]}
+                  />
+                )
+              )}
             </Container>
 
-            <Container>
+            <Container header={<Header variant="h2">Key metrics</Header>}>
               <ColumnLayout columns={4} variant="text-grid">
                 <Metric
-                  label="Total events"
-                  value={summary.data.totalEvents.toLocaleString('en-US')}
-                  hint={`${summary.data.distinctAgents} agents`}
+                  label="Ledger records"
+                  value={
+                    summary.error !== null
+                      ? EMPTY
+                      : summary.data !== null
+                        ? formatCount(summary.data.totalRecords)
+                        : EMPTY
+                  }
+                  {...(summary.data !== null
+                    ? { hint: `${formatCount(summary.data.actorCount)} distinct actors` }
+                    : {})}
                 />
                 <Metric
-                  label="Spend this period"
-                  value={spend.data ? formatUsd(spend.data.totalSpentUsd) : '—'}
-                  hint={spend.data ? `of ${formatUsd(spend.data.totalLimitUsd)} limit` : undefined}
+                  label="Spend to date"
+                  value={
+                    spend.error !== null
+                      ? EMPTY
+                      : totals !== null
+                        ? formatMoney(totals.spent)
+                        : EMPTY
+                  }
+                  {...(totals !== null
+                    ? { hint: `of ${formatMoney(totals.limit)} across all budgets` }
+                    : spend.data !== null && spend.data.length > 0
+                      ? { hint: 'Multiple currencies — see Spend' }
+                      : {})}
                 />
                 <Metric
                   label="Budgets tracked"
-                  value={spend.data ? spend.data.budgets.length : '—'}
-                  hint={
-                    spend.data
-                      ? `${spend.data.budgets.filter((b) => b.state !== 'ok').length} need attention`
-                      : undefined
+                  value={
+                    spend.error !== null
+                      ? EMPTY
+                      : spend.data !== null
+                        ? formatCount(spend.data.length)
+                        : EMPTY
                   }
+                  {...(spend.data !== null
+                    ? { hint: `${formatCount(exceededCount)} over limit` }
+                    : {})}
                 />
                 <Metric
                   label="Highest vendor risk"
-                  value={topVendor ? <RiskBandStatus band={topVendor.band} /> : '—'}
-                  hint={topVendor ? `${topVendor.name} · ${topVendor.score}/100` : undefined}
+                  value={
+                    vendors.error !== null ? (
+                      EMPTY
+                    ) : topVendor !== null ? (
+                      <RiskBandStatus band={topVendor.band} />
+                    ) : (
+                      EMPTY
+                    )
+                  }
+                  {...(topVendor !== null
+                    ? { hint: `${topVendor.name} · score ${formatCount(topVendor.score)}` }
+                    : vendors.data !== null
+                      ? { hint: 'No vendors registered' }
+                      : {})}
                 />
               </ColumnLayout>
             </Container>
-          </>
+
+            {/* Surface non-integrity failures without blocking the rest of the page. */}
+            {spend.error !== null && <ErrorAlert error={spend.error} onRetry={spend.reload} />}
+            {vendors.error !== null && (
+              <ErrorAlert error={vendors.error} onRetry={vendors.reload} />
+            )}
+          </SpaceBetween>
         )}
       </SpaceBetween>
     </ContentLayout>

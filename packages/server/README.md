@@ -4,9 +4,19 @@ Fastify REST API mounting Veritrail's governance engines over one shared ledger.
 
 ## Auth
 
-By default `buildServer()` keeps the local-development behavior: routes are
-unauthenticated unless an `auth` config is provided. Production deployments
-should configure API keys.
+`buildServer()` is a library entrypoint: if no `auth` config is supplied it builds
+an **entirely unauthenticated** app — every route, including admin mutations and
+ledger ingest, is publicly reachable — and logs a warning saying so. That exists
+for tests and embedding, not for deployment.
+
+The `veritrail-server` binary is the deployable surface and **fails closed**: it
+refuses to start unless `VERITRAIL_API_KEYS` or the `VERITRAIL_OIDC_*` variables
+are set. To run it deliberately without authentication during local development,
+set `VERITRAIL_ALLOW_UNAUTHENTICATED=true`; it will start but warn loudly.
+
+> Note on scopes: a key that declares `roles` but omits `scopes` receives every
+> scope those roles allow, and an `admin` key bypasses role and scope checks
+> altogether. List `scopes` explicitly on any key you mean to restrict.
 
 ```ts
 import { buildServer } from '@veritrail/server';
@@ -238,6 +248,45 @@ The binary also accepts:
 - `VERITRAIL_OIDC_ROLE_MAPPINGS` / `VERITRAIL_OIDC_SCOPE_MAPPINGS`
   (comma-separated `external=veritrail` pairs)
 - `VERITRAIL_OIDC_CLOCK_SKEW_SECONDS` (default 60)
+
+And for transport and process configuration:
+
+- `VERITRAIL_ALLOW_UNAUTHENTICATED` — set to `true` to start without any
+  credentials. Development only; every route becomes public.
+- `VERITRAIL_CORS_ORIGINS` — comma-separated list of exact origins allowed to make
+  browser requests. When unset, no CORS headers are sent at all.
+- `VERITRAIL_LEDGER_FILE` — path to a durable JSONL ledger. **Without it the
+  ledger is in-memory and is lost on restart.**
+- `VERITRAIL_SIGNER_SECRET` — enables HMAC signing of ledger records.
+- `PORT` (default 8787) and `HOST` (default `0.0.0.0`).
+
+Malformed numeric values are rejected at startup rather than silently falling back
+to defaults, so a typo in a limit surfaces immediately instead of becoming a
+production mystery.
+
+## Cross-origin access
+
+CORS is **off by default** — the console is served same-origin behind a reverse
+proxy, so no deployment needs it to function.
+
+```ts
+// Reflect only these exact origins.
+await buildServer({ cors: { origins: ['https://ops.example.com'] } });
+
+// Reflect any origin. Development only; never deploy this.
+await buildServer({ cors: true });
+```
+
+## Security headers
+
+Every response carries `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`,
+`Cross-Origin-Resource-Policy: same-origin`, and `Cache-Control: no-store`;
+`X-Powered-By` is stripped. The API only ever returns JSON or NDJSON and is never
+meant to be framed or rendered, so the policy is maximally restrictive. HSTS is
+intentionally not sent — TLS terminates upstream, and emitting HSTS from a
+plaintext origin would be misleading.
 
 ## Limits
 

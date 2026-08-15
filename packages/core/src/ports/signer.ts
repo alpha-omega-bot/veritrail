@@ -71,8 +71,7 @@ export interface Ed25519SignerOptions {
   readonly keyId?: string;
   /** Public keys accepted during verification, keyed by `signerKeyId`. */
   readonly trustedPublicKeys?:
-    | ReadonlyMap<string, Ed25519KeyInput>
-    | Record<string, Ed25519KeyInput>;
+    ReadonlyMap<string, Ed25519KeyInput> | Record<string, Ed25519KeyInput>;
 }
 
 function toPrivateKey(input: Ed25519KeyInput): KeyObject {
@@ -155,8 +154,7 @@ export interface RemoteEd25519SignerOptions {
   readonly publicKey: Ed25519KeyInput;
   /** Previous public keys accepted during verification, keyed by `signerKeyId`. */
   readonly trustedPublicKeys?:
-    | ReadonlyMap<string, Ed25519KeyInput>
-    | Record<string, Ed25519KeyInput>;
+    ReadonlyMap<string, Ed25519KeyInput> | Record<string, Ed25519KeyInput>;
 }
 
 /**

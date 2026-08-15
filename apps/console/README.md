@@ -35,25 +35,55 @@ Endpoints consumed (all `GET`):
 | `/api/vendor-risk/assess`                | Vendor Risk |
 | `/api/forensics/incident?correlationId=` | Forensics   |
 
-## Offline Data
+## Authentication
 
-Every API call is wrapped in a try/catch and falls back to local sample data in
-`src/mocks.ts`, so the SPA renders fully standalone with no server running. When
-sample data is shown, a small notice appears at the top of the affected view.
+Every endpoint above except `/api/health` requires an API credential with the
+`operator` role and the matching read scope. `/api/audit/summary` additionally
+requires an **unscoped** key (one with no `labelScope`).
+
+The console asks for a token at runtime and keeps it in `sessionStorage` for the
+duration of the browser session. It is deliberately **never** read from an
+env var or baked into the built bundle — a bundled credential would be readable by
+anyone who can load the page. If authentication is terminated by a reverse proxy
+in front of the API, leave the token field empty and requests will be sent
+without an `Authorization` header.
+
+## No fallback data
+
+This console shows only what the API actually returned. There is no sample-data or
+offline mode: if a request fails, the affected view renders an explicit error with
+a retry action and displays no figures at all.
+
+That is a deliberate constraint rather than an omission. The console reports on a
+tamper-evident audit ledger, so "integrity: verified" has to mean the server said
+so. Substituting placeholder values on failure — or leaving a stale reading on
+screen after a failed refresh — would make the display untrustworthy in exactly
+the situation where it matters most.
 
 ## Structure
 
 ```
 src/
-  api.ts          typed REST client + useAsync hook (with offline fallback)
-  types.ts        API payload interfaces
-  mocks.ts        local sample data
-  format.ts       presentation helpers (currency, dates, hashes)
+  api.ts          typed REST client + useAsync hook; throws ApiError, never falls back
+  types.ts        API payload interfaces mirroring the real server responses
+  format.ts       presentation helpers (money, epoch-ms dates, hashes, labels)
   status.tsx      domain → Cloudscape StatusIndicator mapping
+  components.tsx  shared error / loading / metric / credential UI
   App.tsx         TopNavigation + AppLayout + SideNavigation shell; hash routing
   main.tsx        React root (imports Cloudscape global styles)
   views/          Overview, Ledger, Spend, Vendor Risk, Forensics
 ```
+
+### Payload conventions
+
+Two API conventions are easy to get wrong when editing these views:
+
+- **Timestamps are epoch-millisecond numbers**, not ISO strings.
+- **Money is integer minor units** (`{ currency, amountMinor }`), never a float.
+  Use `formatMoney` so each currency's own exponent is applied.
+
+Collection endpoints also return bare JSON arrays with no envelope and no
+pagination metadata.
 
 The UI is built with the **[AWS Cloudscape design system](https://cloudscape.design/)**
 (`@cloudscape-design/components`) for an AWS-console look and feel. Navigation is

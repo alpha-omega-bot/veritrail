@@ -207,7 +207,10 @@ export class SpendGuardModule implements VeritrailModule {
         budget,
         spent,
         remaining,
-        exceeded: compareMoney(spent, budget.limit) >= 0,
+        // Must match `authorize`, which only blocks once spend passes the limit:
+        // reaching the limit exactly is still within budget. Reporting `>=` here
+        // would flag a budget as exceeded while charges against it still succeed.
+        exceeded: compareMoney(spent, budget.limit) > 0,
       });
     }
     return out;
