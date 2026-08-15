@@ -14,7 +14,12 @@ import {
   type ServerLimitsConfig,
 } from './limits.js';
 
-const port = Number(process.env['PORT'] ?? 8787);
+/** Env flags that explicitly opt into an otherwise-refused insecure posture. */
+const ALLOW_UNAUTHENTICATED = 'VERITRAIL_ALLOW_UNAUTHENTICATED';
+
+const port = parsePositiveInt(process.env['PORT'], 'PORT') ?? 8787;
+// Binds all interfaces so container and VM deployments are reachable. Keep the
+// service behind a TLS-terminating proxy; authentication is enforced above.
 const host = process.env['HOST'] ?? '0.0.0.0';
 
 const options: BuildServerOptions = { logger: true };
@@ -33,8 +38,26 @@ if (apiKeys.length > 0 || oidc !== undefined) {
   };
 } else if (adminActionSigning !== undefined) {
   throw new Error('VERITRAIL_ADMIN_ACTION_SIGNING_SECRET requires server auth credentials');
+} else if (!isTruthyFlag(process.env[ALLOW_UNAUTHENTICATED])) {
+  // Fail closed. Without credentials every route is public, including admin
+  // policy/budget mutations and raw ledger ingest — which would let anyone write
+  // to the append-only record this system exists to make trustworthy.
+  throw new Error(
+    'Refusing to start without authentication. Set VERITRAIL_API_KEYS (or the ' +
+      'VERITRAIL_OIDC_* variables) to configure credentials. To run deliberately ' +
+      `unauthenticated for local development, set ${ALLOW_UNAUTHENTICATED}=true.`,
+  );
 }
+const corsOrigins = csvFromEnv(process.env['VERITRAIL_CORS_ORIGINS']);
+if (corsOrigins.length > 0) options.cors = { origins: corsOrigins };
 options.limits = limitsFromEnv();
+
+if (options.auth === undefined) {
+  console.warn(
+    `[veritrail] ${ALLOW_UNAUTHENTICATED} is set: starting with NO authentication. ` +
+      'Every route is publicly reachable. Never use this in production.',
+  );
+}
 
 const app = await buildServer(options);
 
@@ -46,7 +69,10 @@ try {
 }
 
 function limitsFromEnv(): ServerLimitsConfig {
-  const bodyLimitBytes = parsePositiveInt(process.env['VERITRAIL_BODY_LIMIT_BYTES']);
+  const bodyLimitBytes = parsePositiveInt(
+    process.env['VERITRAIL_BODY_LIMIT_BYTES'],
+    'VERITRAIL_BODY_LIMIT_BYTES',
+  );
   const rateLimit = rateLimitFromEnv();
   const maxInFlightWrites = maxInFlightWritesFromEnv();
   return {
@@ -60,7 +86,10 @@ function adminActionSigningFromEnv(): AdminActionSigningConfig | undefined {
   const secret = process.env['VERITRAIL_ADMIN_ACTION_SIGNING_SECRET'];
   if (!secret) return undefined;
   const keyId = process.env['VERITRAIL_ADMIN_ACTION_SIGNING_KEY_ID'];
-  const maxSkewMs = parsePositiveInt(process.env['VERITRAIL_ADMIN_ACTION_SIGNING_MAX_SKEW_MS']);
+  const maxSkewMs = parsePositiveInt(
+    process.env['VERITRAIL_ADMIN_ACTION_SIGNING_MAX_SKEW_MS'],
+    'VERITRAIL_ADMIN_ACTION_SIGNING_MAX_SKEW_MS',
+  );
   return {
     secret,
     ...(keyId !== undefined && keyId.length > 0 ? { keyId } : {}),
@@ -90,8 +119,14 @@ function oidcFromEnv(): OidcAuthConfig | undefined {
   const defaultScopes = scopesFromEnv(process.env['VERITRAIL_OIDC_DEFAULT_SCOPES']);
   const roleMappings = mappingFromEnv(process.env['VERITRAIL_OIDC_ROLE_MAPPINGS'], parseRole);
   const scopeMappings = mappingFromEnv(process.env['VERITRAIL_OIDC_SCOPE_MAPPINGS'], parseScope);
-  const clockSkewSeconds = parseNonNegativeInt(process.env['VERITRAIL_OIDC_CLOCK_SKEW_SECONDS']);
-  const jwksCacheTtlMs = parseNonNegativeInt(process.env['VERITRAIL_OIDC_JWKS_CACHE_TTL_MS']);
+  const clockSkewSeconds = parseNonNegativeInt(
+    process.env['VERITRAIL_OIDC_CLOCK_SKEW_SECONDS'],
+    'VERITRAIL_OIDC_CLOCK_SKEW_SECONDS',
+  );
+  const jwksCacheTtlMs = parseNonNegativeInt(
+    process.env['VERITRAIL_OIDC_JWKS_CACHE_TTL_MS'],
+    'VERITRAIL_OIDC_JWKS_CACHE_TTL_MS',
+  );
   return {
     issuer,
     audience: audience.length === 1 ? audience[0]! : audience,
@@ -157,8 +192,11 @@ function csvFromEnv(raw: string | undefined): string[] {
 function rateLimitFromEnv(): ServerLimitsConfig['rateLimit'] | undefined {
   const maxRaw = process.env['VERITRAIL_RATE_LIMIT_MAX'];
   if (maxRaw === '0') return false;
-  const max = parsePositiveInt(maxRaw);
-  const windowMs = parsePositiveInt(process.env['VERITRAIL_RATE_LIMIT_WINDOW_MS']);
+  const max = parsePositiveInt(maxRaw, 'VERITRAIL_RATE_LIMIT_MAX');
+  const windowMs = parsePositiveInt(
+    process.env['VERITRAIL_RATE_LIMIT_WINDOW_MS'],
+    'VERITRAIL_RATE_LIMIT_WINDOW_MS',
+  );
   if (max === undefined && windowMs === undefined) return undefined;
   return {
     max: max ?? DEFAULT_RATE_LIMIT_MAX,
@@ -169,17 +207,38 @@ function rateLimitFromEnv(): ServerLimitsConfig['rateLimit'] | undefined {
 function maxInFlightWritesFromEnv(): ServerLimitsConfig['maxInFlightWrites'] | undefined {
   const raw = process.env['VERITRAIL_MAX_IN_FLIGHT_WRITES'];
   if (raw === '0') return false;
-  return parsePositiveInt(raw);
+  return parsePositiveInt(raw, 'VERITRAIL_MAX_IN_FLIGHT_WRITES');
 }
 
-function parsePositiveInt(raw: string | undefined): number | undefined {
-  if (!raw) return undefined;
-  const value = Number(raw);
-  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+/** Interpret an env flag as a boolean. Only explicit affirmatives count. */
+function isTruthyFlag(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
 }
 
-function parseNonNegativeInt(raw: string | undefined): number | undefined {
-  if (!raw) return undefined;
+/**
+ * Parse a positive integer env var.
+ *
+ * A malformed value throws rather than silently falling back to the default: a
+ * typo in a limit or port should surface at boot, not become a mystery in
+ * production.
+ */
+function parsePositiveInt(raw: string | undefined, name: string): number | undefined {
+  if (raw === undefined || raw.trim().length === 0) return undefined;
   const value = Number(raw);
-  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer, received "${raw}"`);
+  }
+  return value;
+}
+
+/** Parse a non-negative integer env var, throwing on a malformed value. */
+function parseNonNegativeInt(raw: string | undefined, name: string): number | undefined {
+  if (raw === undefined || raw.trim().length === 0) return undefined;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer, received "${raw}"`);
+  }
+  return value;
 }

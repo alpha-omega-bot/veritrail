@@ -51,15 +51,26 @@ tagged release. Pin a version and watch releases for advisories.
   redact PII at rest. Do not place secrets/PII in event payloads until field-level
   redaction/encryption lands (Milestone 1). Protect the ledger file/store with
   OS- and storage-level controls.
-- **No authN/authZ in the server yet.** The v0.1 server is unauthenticated and
-  intended for trusted networks / local use. Do not expose it publicly until
-  Milestone 1 auth lands.
+- **Scopes only narrow keys that declare them.** An API key configured with roles
+  but no `scopes` is granted every scope available to those roles, and an `admin`
+  key bypasses role and scope checks entirely. Enumerate `scopes` explicitly on
+  every key you intend to restrict.
+- **Budgets are held in memory.** Spend budgets do not survive a server restart and
+  must be re-created; only the charge events themselves are durable in the ledger.
+- **The ledger is in-memory unless configured.** Without `VERITRAIL_LEDGER_FILE`
+  the server keeps the chain in memory and loses it on restart.
 - **HMAC signing uses a shared secret.** Verifiers hold the key; use Ed25519 or
   `RemoteEd25519Signer` for untrusted-verifier scenarios.
 
 ## Hardening guidance
 
-- Run the server behind your own authenticated gateway until native auth ships.
+- **Always configure credentials.** The `veritrail-server` binary refuses to start
+  without `VERITRAIL_API_KEYS` or the `VERITRAIL_OIDC_*` variables. The escape
+  hatch, `VERITRAIL_ALLOW_UNAUTHENTICATED=true`, disables authentication on every
+  route — including admin mutations and ledger ingest — and is for local
+  development only.
+- Terminate TLS in front of the server and restrict `VERITRAIL_CORS_ORIGINS` to the
+  exact origins that need browser access. CORS is disabled unless configured.
 - Store the ledger on append-friendly, access-controlled storage; back it up.
 - Enable a `Signer` and persist `signerKeyId`; rotate keys deliberately.
 - Treat `pnpm verify` and the CI ledger-integrity gate as required checks.

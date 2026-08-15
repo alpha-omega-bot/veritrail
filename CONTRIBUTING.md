@@ -5,7 +5,10 @@ gets you productive and explains the standards we hold the code to.
 
 ## Prerequisites
 
-- **Node** ≥ 20.11 (see [`.nvmrc`](./.nvmrc) — `nvm use`).
+- **Node** ≥ 20.19 (or ≥ 22.12) to run the build toolchain — see [`.nvmrc`](./.nvmrc)
+  (`nvm use`). The published packages themselves still support Node ≥ 20.11; the
+  higher floor comes from the dev-only toolchain (Vite/Vitest) and is enforced at
+  install time because `engine-strict` is enabled.
 - **pnpm** 9 via Corepack: `corepack enable && corepack prepare pnpm@9.15.0 --activate`.
 
 ## Setup

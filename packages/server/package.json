@@ -26,7 +26,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@fastify/cors": "^10.0.1",
+    "@fastify/cors": "^10.1.0",
     "@veritrail/audit": "workspace:*",
     "@veritrail/core": "workspace:*",
     "@veritrail/decision-memory": "workspace:*",
@@ -36,8 +36,8 @@
     "@veritrail/rollback": "workspace:*",
     "@veritrail/spend-guard": "workspace:*",
     "@veritrail/vendor-risk": "workspace:*",
-    "fastify": "^5.2.0",
-    "zod": "^3.24.1"
+    "fastify": "^5.12.0",
+    "zod": "^3.25.76"
   },
   "engines": {
     "node": ">=20.11.0"

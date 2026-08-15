@@ -67,4 +67,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Core ledger & tamper-evidence tests
-        run: pnpm --filter @veritrail/core test
+        # Runs the root vitest config scoped to the core package. Do NOT use
+        # `pnpm --filter @veritrail/core test`: core defines no `test` script, so
+        # that form exits 0 without running anything and this gate silently passes.
+        run: pnpm exec vitest run packages/core

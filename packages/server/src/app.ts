@@ -12,6 +12,7 @@ import {
   createFileLedger,
   createInMemoryLedger,
   isEventType,
+  notFoundError,
   validationError,
   type Actor,
   type Clock,
@@ -62,12 +63,25 @@ export interface BuildServerOptions {
   ids?: IdGenerator;
   /** Fastify logger (default off). */
   logger?: boolean;
-  /** Enable permissive CORS (default true; restrict in production). */
-  cors?: boolean;
+  /**
+   * Cross-origin access control. Disabled by default: the console is served
+   * same-origin behind a reverse proxy, so no deployment needs CORS to function.
+   *
+   * - omitted / `false` — no CORS headers are sent (default, most restrictive).
+   * - `{ origins: [...] }` — reflect only these exact origins.
+   * - `true` — reflect any origin. Development convenience only; never deploy
+   *   this, as it lets any web page read API responses.
+   */
+  cors?: boolean | { origins: readonly string[] };
   permissions?: PermissionsConfig;
   /**
-   * API-key authentication. When omitted, the server preserves the v0.1
-   * unauthenticated behavior for local development and tests.
+   * Authentication configuration.
+   *
+   * When omitted the server runs with **no authentication at all** — every
+   * route, including admin mutations and ledger ingest, is publicly reachable.
+   * That is acceptable only for tests and local development. The
+   * `veritrail-server` entrypoint refuses to start in this state unless it is
+   * explicitly acknowledged; see `main.ts`.
    */
   auth?: AuthConfig;
   /** Request size, rate, and write backpressure controls. */
@@ -98,8 +112,7 @@ const QueryNonNegativeIntegerSchema = z
   .pipe(z.number().finite().int().safe().nonnegative());
 
 type QueryParseResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: ReturnType<typeof validationError> };
+  { ok: true; value: T } | { ok: false; error: ReturnType<typeof validationError> };
 
 function eventQueryFrom(raw: Record<string, unknown>): QueryParseResult<EventQuery> {
   const query: EventQuery = {};
@@ -170,12 +183,59 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Fas
   const limits = normalizeLimits(options.limits);
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: limits.bodyLimitBytes });
   registerServerLimits(app, limits);
-  if (options.cors !== false) {
-    await app.register(cors, { origin: true });
-  }
+  registerSecurityHeaders(app);
+  await registerCors(app, options.cors);
   const authenticator = options.auth ? new ApiKeyAuthenticator(options.auth) : undefined;
+  if (authenticator === undefined) {
+    app.log.warn(
+      'veritrail.auth.disabled: no authentication configured — every route, including admin ' +
+        'mutations and ledger ingest, is publicly reachable. Do not run this configuration in ' +
+        'production.',
+    );
+  }
   registerRoutes(app, platform, authenticator, limits.rateLimit);
   return app;
+}
+
+/**
+ * Response headers applied to every reply.
+ *
+ * The API only ever returns JSON or NDJSON and is never meant to be embedded or
+ * rendered as a document, so the policy is maximally restrictive: deny framing,
+ * deny sniffing, send no referrer, and permit no resource loading at all.
+ * HSTS is intentionally omitted — TLS terminates upstream, and emitting HSTS from
+ * a plaintext origin would be misleading.
+ */
+function registerSecurityHeaders(app: FastifyInstance): void {
+  app.addHook('onSend', async (_request, reply, payload) => {
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('x-frame-options', 'DENY');
+    reply.header('referrer-policy', 'no-referrer');
+    reply.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'");
+    reply.header('cross-origin-resource-policy', 'same-origin');
+    reply.header('cache-control', 'no-store');
+    // Fastify sets this automatically; strip it so the stack is not advertised.
+    reply.removeHeader('x-powered-by');
+    return payload;
+  });
+}
+
+/** Register CORS according to {@link BuildServerOptions.cors}. */
+async function registerCors(
+  app: FastifyInstance,
+  config: BuildServerOptions['cors'],
+): Promise<void> {
+  if (config === undefined || config === false) return;
+  if (config === true) {
+    app.log.warn(
+      'veritrail.cors.permissive: reflecting any origin. Use { origins: [...] } in production.',
+    );
+    await app.register(cors, { origin: true });
+    return;
+  }
+  const origins = [...config.origins];
+  if (origins.length === 0) return;
+  await app.register(cors, { origin: origins });
 }
 
 function registerRoutes(
@@ -239,9 +299,12 @@ function registerRoutes(
     uptimeMs: Date.now() - startedAt,
   }));
 
+  // Readiness stays unauthenticated so orchestrators can probe it, so it must not
+  // disclose anything about ledger contents — the record count is deliberately
+  // checked but not returned.
   app.get('/api/ready', publicRoute, async (_request, reply) => {
-    const count = await ledger.count();
-    return reply.send({ ready: true, records: count });
+    await ledger.count();
+    return reply.send({ ready: true });
   });
 
   // ---- raw ledger ingest ------------------------------------------------
@@ -267,10 +330,12 @@ function registerRoutes(
     const seq = asNumber((request.params as Record<string, unknown>)['seq']);
     if (seq === undefined) return replyError(reply, validationError('seq must be a number'));
     const record = await audit.get(seq);
-    if (record !== null && !recordInPrincipalScope(record, request.principal)) {
-      return reply.code(404).send({ error: { code: 'NOT_FOUND' } });
+    // Out-of-scope records are reported as absent rather than forbidden, so a
+    // label-scoped key cannot probe for the existence of records outside its scope.
+    if (record === null || !recordInPrincipalScope(record, request.principal)) {
+      return replyError(reply, notFoundError(`no ledger record at seq ${seq}`));
     }
-    return record ? reply.send(record) : reply.code(404).send({ error: { code: 'NOT_FOUND' } });
+    return reply.send(record);
   });
 
   app.get('/api/audit/summary', unscopedReadRoute(auditRead), async (_request, reply) =>
